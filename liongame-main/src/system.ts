@@ -1,19 +1,9 @@
-import { GAME_HEIGHT, GAME_WIDTH, MOVE_DURATION, MOVE_RANDOM } from "./constants";
+import { Marble } from "./game/Marble";
 
 type Hole = {
   id: number;
   x: number;
   y: number;
-};
-
-type Marble = {
-  id: number;
-  x: number;
-  y: number;
-  lion: boolean;
-  hole: number;
-  alive: boolean;
-  inHole: boolean;
 };
 
 const HOLES: Hole[] = [
@@ -37,50 +27,52 @@ type State = "wait_move" | "moving";
 
 const MARBLE_RADIUS = 25 / 2;
 const HOLE_RADIUS = 35 / 2;
+const PHYSICS_STEP_MS = 1000 / 60;
+const DRAG_PICKUP_RADIUS = 30;
+const MIN_PULL_DISTANCE = 5;
 
 export class System {
   private turn: number = 0;
   private marbles: Marble[];
   private holes: Hole[] = HOLES;
   private state: State = "wait_move";
-  debugInfo: string;
 
   constructor(private marbleCount: number, private renderFunction: RenderFunction) {
     this.marbles = [];
     for (let i = 0; i < marbleCount; i += 1) {
-      this.marbles.push({
-        id: i,
-        hole: 0,
-        lion: false,
-        x: 100 + i * 130,
-        y: 1200,
-        alive: true,
-        inHole: true,
-      });
+      this.marbles.push(new Marble(i, 100 + i * 130, 1200, false, 0, true, true));
     }
-    this.debugInfo = `r:${MOVE_RANDOM}`;
   }
 
-  moveMarble(x: number, y: number) {
-    x = randomNumber(x - MOVE_RANDOM, x + MOVE_RANDOM);
-    y = randomNumber(y - MOVE_RANDOM, y + MOVE_RANDOM);
-    x = clamp(x, 10, GAME_WIDTH - 10);
-    y = clamp(y, 10, GAME_HEIGHT - 10);
+  getDraggableMarblePosition(x: number, y: number) {
     if (this.state !== "wait_move") {
-      throw Error("not wait_move");
+      return null;
     }
-    this.state = "moving";
+
     const marble = this.marbles[this.turn];
+    if (!marble.alive || Math.hypot(x - marble.x, y - marble.y) > DRAG_PICKUP_RADIUS) {
+      return null;
+    }
+    return { x: marble.x, y: marble.y };
+  }
+
+  launchMarble(directionX: number, directionY: number) {
+    if (this.state !== "wait_move") {
+      return false;
+    }
+    if (Math.hypot(directionX, directionY) < MIN_PULL_DISTANCE) {
+      return false;
+    }
+
+    const marble = this.marbles[this.turn];
+    if (!marble.alive || !marble.launchFromPull(directionX, directionY)) {
+      return false;
+    }
+
+    this.state = "moving";
     marble.inHole = false;
-    const startX = marble.x;
-    const startY = marble.y;
-    let i = 0;
-    const max = 30;
-    const duration = MOVE_DURATION;
     const f = () => {
-      i += 1;
-      marble.x = startX + ((x - startX) / max) * i;
-      marble.y = startY + ((y - startY) / max) * i;
+      const isMoving = marble.step();
       if (this.checkCollision(marble)) {
         this.state = "wait_move";
         this.nextTurn();
@@ -88,9 +80,9 @@ export class System {
         return;
       }
 
-      if (i !== max) {
+      if (isMoving) {
         this.render();
-        setTimeout(f, duration / max);
+        setTimeout(f, PHYSICS_STEP_MS);
         return;
       }
       this.state = "wait_move";
@@ -98,6 +90,7 @@ export class System {
       this.render();
     };
     f();
+    return true;
   }
 
   private nextTurn() {
@@ -172,16 +165,3 @@ function collision(x1: number, y1: number, x2: number, y2: number, d1: number, d
   return distance <= d1 + d2;
 }
 
-function randomNumber(min: number, max: number) {
-  return Math.random() * (max - min) + min;
-}
-
-function clamp(v: number, min: number, max: number) {
-  if (v < min) {
-    return min;
-  }
-  if (v > max) {
-    return max;
-  }
-  return v;
-}

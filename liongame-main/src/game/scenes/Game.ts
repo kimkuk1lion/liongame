@@ -1,6 +1,5 @@
 import { Scene } from "phaser";
 import { System } from "../../system";
-import { MOVE_DURATION, MOVE_RANDOM } from "../../constants";
 
 export class Game extends Scene {
   constructor() {
@@ -25,7 +24,6 @@ export class Game extends Scene {
     });
     const guideLine = this.add.line(0, 0, 0, 0, 0, 0, 0xff0000, 0.3);
     guideLine.setDepth(99).setLineWidth(20, 1);
-    const cursorCircle = this.add.circle(-9990, 0, MOVE_RANDOM, 0x0000ff, 0.2).setDepth(-10);
 
     let init = false;
     const system = new System(4, (args) => {
@@ -84,19 +82,59 @@ export class Game extends Scene {
         }
       });
     });
-    this.add.text(450, 0, system.debugInfo, {
-      color: "#000",
-      fontSize: 20,
-    });
 
-    system.render();
+    const pullLine = this.add.line(0, 0, 0, 0, 0, 0, 0x2774d8, 0.8);
+    pullLine.setDepth(100).setLineWidth(8, 2).setVisible(false);
+    const launchLine = this.add.line(0, 0, 0, 0, 0, 0, 0x18a558, 0.8);
+    launchLine.setDepth(100).setLineWidth(8, 2).setVisible(false);
+    let dragOrigin: { x: number; y: number } | null = null;
+
+    const showDrag = (pointer: Phaser.Input.Pointer) => {
+      if (!dragOrigin) {
+        return;
+      }
+      const pullX = pointer.x - dragOrigin.x;
+      const pullY = pointer.y - dragOrigin.y;
+      pullLine.setTo(dragOrigin.x, dragOrigin.y, pointer.x, pointer.y);
+      launchLine.setTo(
+        dragOrigin.x,
+        dragOrigin.y,
+        dragOrigin.x - pullX,
+        dragOrigin.y - pullY,
+      );
+    };
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      system.moveMarble(pointer.x, pointer.y);
-      cursorCircle.setPosition(pointer.x, pointer.y);
-      setTimeout(() => {
-        cursorCircle.setPosition(-999, 0);
-      }, MOVE_DURATION);
+      dragOrigin = system.getDraggableMarblePosition(pointer.x, pointer.y);
+      if (!dragOrigin) {
+        return;
+      }
+      pullLine.setVisible(true);
+      launchLine.setVisible(true);
+      showDrag(pointer);
     });
+
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.isDown) {
+        showDrag(pointer);
+      }
+    });
+
+    const finishDrag = (pointer: Phaser.Input.Pointer) => {
+      if (!dragOrigin) {
+        return;
+      }
+      const launchX = dragOrigin.x - pointer.x;
+      const launchY = dragOrigin.y - pointer.y;
+      dragOrigin = null;
+      pullLine.setVisible(false);
+      launchLine.setVisible(false);
+      system.launchMarble(launchX, launchY);
+    };
+
+    this.input.on("pointerup", finishDrag);
+    this.input.on("pointerupoutside", finishDrag);
+
+    system.render();
   }
 }
