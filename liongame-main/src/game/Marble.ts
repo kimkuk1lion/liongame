@@ -7,6 +7,11 @@ const STOP_SPEED = 0.15;
 const MAX_SPEED = 24;
 const SPEED_PER_PULL_DISTANCE = 0.08;
 
+export const SCORE_RULES = {
+  holeEntry: 100,
+  lionCapture: 30,
+} as const;
+
 export class Marble {
   private velocityX = 0;
   private velocityY = 0;
@@ -19,6 +24,7 @@ export class Marble {
     public hole: number,
     public alive: boolean,
     public inHole: boolean,
+    public score = 0,
   ) {}
 
   launchFromPull(directionX: number, directionY: number) {

@@ -1,4 +1,4 @@
-import { Marble } from "./game/Marble";
+import { Marble, SCORE_RULES } from "./game/Marble";
 import { GAME_MAPS, type GameMap, type Hole } from "./game/maps";
 
 type RenderArgs = {
@@ -10,6 +10,19 @@ type RenderArgs = {
   state: State;
 };
 
+type SavedMarble = Pick<
+  Marble,
+  "id" | "x" | "y" | "lion" | "hole" | "alive" | "inHole" | "score"
+>;
+
+type SavedProgress = {
+  version: 1;
+  mapIndex: number;
+  turn: number;
+  hasStarted: boolean;
+  marbles: SavedMarble[];
+};
+
 type RenderFunction = (args: RenderArgs) => void;
 type State = "wait_move" | "moving";
 
@@ -18,6 +31,7 @@ const HOLE_RADIUS = 35 / 2;
 const PHYSICS_STEP_MS = 1000 / 60;
 const DRAG_PICKUP_RADIUS = 30;
 const MIN_PULL_DISTANCE = 5;
+const SAVE_KEY = "liongame.progress.v1";
 
 export class System {
   private turn: number = 0;
@@ -31,6 +45,7 @@ export class System {
     for (let i = 0; i < marbleCount; i += 1) {
       this.marbles.push(new Marble(i, 100 + i * 130, 1200, false, 0, true, true));
     }
+    this.restoreProgress();
   }
 
   getDraggableMarblePosition(x: number, y: number) {
@@ -53,6 +68,7 @@ export class System {
       return false;
     }
     this.mapIndex = mapIndex;
+    this.saveProgress();
     this.render();
     return true;
   }
@@ -78,6 +94,7 @@ export class System {
       if (this.checkCollision(marble)) {
         this.state = "wait_move";
         this.nextTurn();
+        this.saveProgress();
         this.render();
         return;
       }
@@ -89,6 +106,7 @@ export class System {
       }
       this.state = "wait_move";
       this.nextTurn();
+      this.saveProgress();
       this.render();
     };
     f();
@@ -111,7 +129,7 @@ export class System {
       const targetHole = this.currentMap.holes[marble.hole];
 
       if (collision(targetHole.x, targetHole.y, marble.x, marble.y, HOLE_RADIUS, MARBLE_RADIUS)) {
-        this.nextHole(marble);
+        this.nextHole(marble, true);
         return true;
       }
     }
@@ -124,12 +142,12 @@ export class System {
         collision(otherMarble.x, otherMarble.y, marble.x, marble.y, MARBLE_RADIUS, MARBLE_RADIUS)
       ) {
         if (marble.lion) {
-          otherMarble.alive = false;
+          this.captureMarble(marble, otherMarble);
           return true;
         }
 
         if (otherMarble.lion) {
-          marble.alive = false;
+          this.captureMarble(otherMarble, marble);
           return true;
         }
 
@@ -141,8 +159,79 @@ export class System {
     return false;
   }
 
-  private nextHole(marble: Marble) {
+  private captureMarble(lion: Marble, victim: Marble) {
+    victim.alive = false;
+    lion.score += SCORE_RULES.lionCapture;
+  }
+
+  private restoreProgress() {
+    try {
+      const serialized = window.localStorage.getItem(SAVE_KEY);
+      if (!serialized) {
+        return;
+      }
+
+      const saved: unknown = JSON.parse(serialized);
+      if (!isSavedProgress(saved)) {
+        return;
+      }
+      if (
+        saved.marbles.length !== this.marbleCount ||
+        saved.mapIndex < 0 ||
+        saved.mapIndex >= GAME_MAPS.length ||
+        saved.turn < 0 ||
+        saved.turn >= this.marbleCount
+      ) {
+        return;
+      }
+      if (
+        saved.marbles.some(
+          (marble) => marble.hole < 0 || marble.hole > GAME_MAPS[saved.mapIndex].holes.length,
+        )
+      ) {
+        return;
+      }
+
+      this.mapIndex = saved.mapIndex;
+      this.turn = saved.turn;
+      this.hasStarted = saved.hasStarted;
+      saved.marbles.forEach((savedMarble, i) => {
+        Object.assign(this.marbles[i], savedMarble);
+      });
+    } catch {
+      // Continue with a fresh game when browser storage is unavailable.
+    }
+  }
+
+  private saveProgress() {
+    try {
+      const saved: SavedProgress = {
+        version: 1,
+        mapIndex: this.mapIndex,
+        turn: this.turn,
+        hasStarted: this.hasStarted,
+        marbles: this.marbles.map(({ id, x, y, lion, hole, alive, inHole, score }) => ({
+          id,
+          x,
+          y,
+          lion,
+          hole,
+          alive,
+          inHole,
+          score,
+        })),
+      };
+      window.localStorage.setItem(SAVE_KEY, JSON.stringify(saved));
+    } catch {
+      // Keep the current session playable when browser storage is unavailable.
+    }
+  }
+
+  private nextHole(marble: Marble, awardHolePoints = false) {
     const targetHole = this.currentMap.holes[marble.hole];
+    if (awardHolePoints) {
+      marble.score += SCORE_RULES.holeEntry;
+    }
     marble.inHole = true;
     marble.x = targetHole.x;
     marble.y = targetHole.y;
@@ -166,6 +255,38 @@ export class System {
       state: this.state,
     });
   }
+}
+
+function isSavedProgress(value: unknown): value is SavedProgress {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const saved = value as Partial<SavedProgress>;
+  return (
+    saved.version === 1 &&
+    Number.isInteger(saved.mapIndex) &&
+    Number.isInteger(saved.turn) &&
+    typeof saved.hasStarted === "boolean" &&
+    Array.isArray(saved.marbles) &&
+    saved.marbles.every((marble, index) => {
+      if (!marble || typeof marble !== "object") {
+        return false;
+      }
+      const item = marble as Partial<SavedMarble>;
+      return (
+        item.id === index &&
+        Number.isFinite(item.x) &&
+        Number.isFinite(item.y) &&
+        typeof item.lion === "boolean" &&
+        Number.isInteger(item.hole) &&
+        typeof item.alive === "boolean" &&
+        typeof item.inHole === "boolean" &&
+        Number.isInteger(item.score) &&
+        (item.score ?? -1) >= 0
+      );
+    })
+  );
 }
 
 function collision(x1: number, y1: number, x2: number, y2: number, d1: number, d2: number) {

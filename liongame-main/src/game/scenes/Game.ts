@@ -35,6 +35,11 @@ export class Game extends Scene {
       fontSize: 24,
       fontStyle: "bold",
     }).setDepth(100);
+    const scoreboardText = this.add.text(GAME_WINDOW_WIDTH - 180, 180, "", {
+      color: "#fff",
+      fontSize: 17,
+      lineSpacing: 10,
+    });
     const guideLine = this.add.line(0, 0, 0, 0, 0, 0, 0xff0000, 0.3);
     guideLine.setLineWidth(20, 1).setDepth(1);
     const pullLine = this.add
@@ -97,6 +102,17 @@ export class Game extends Scene {
       }
 
       descriptionText.setText(`맵: ${args.map.name}\n차례: ${args.turn + 1}   상태: ${args.state}`);
+      scoreboardText.setText(
+        [
+          "점수판",
+          "자동 저장 · 이어하기",
+          "",
+          ...args.marbles.map((marble) => {
+            const status = !marble.alive ? "잡힘" : marble.lion ? "사자" : "진행 중";
+            return `구슬 ${marble.id + 1}: ${marble.score}점 · ${status}`;
+          }),
+        ].join("\n"),
+      );
       mapButtons.forEach((button, i) => {
         const selected = i === args.mapIndex;
         button.setStyle({
