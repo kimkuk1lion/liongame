@@ -23,6 +23,11 @@ type SavedProgress = {
   marbles: SavedMarble[];
 };
 
+export type SystemOptions = {
+  initialMapIndex?: number;
+  resumeSavedGame?: boolean;
+};
+
 type RenderFunction = (args: RenderArgs) => void;
 type State = "wait_move" | "moving";
 
@@ -39,13 +44,25 @@ export class System {
   private mapIndex = 0;
   private hasStarted = false;
   private state: State = "wait_move";
+  private physicsTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
-  constructor(private marbleCount: number, private renderFunction: RenderFunction) {
+  constructor(
+    private marbleCount: number,
+    private renderFunction: RenderFunction,
+    options: SystemOptions = {},
+  ) {
+    const initialMapIndex = options.initialMapIndex ?? 0;
+    if (Number.isInteger(initialMapIndex) && initialMapIndex >= 0 && initialMapIndex < GAME_MAPS.length) {
+      this.mapIndex = initialMapIndex;
+    }
     this.marbles = [];
     for (let i = 0; i < marbleCount; i += 1) {
       this.marbles.push(new Marble(i, 100 + i * 130, 1200, false, 0, true, true));
     }
-    this.restoreProgress();
+    if (options.resumeSavedGame) {
+      this.restoreProgress();
+    }
   }
 
   getDraggableMarblePosition(x: number, y: number) {
@@ -89,7 +106,12 @@ export class System {
     this.state = "moving";
     this.hasStarted = true;
     marble.inHole = false;
+    this.saveProgress();
     const f = () => {
+      this.physicsTimer = null;
+      if (this.stopped) {
+        return;
+      }
       const isMoving = marble.step(this.currentMap.obstacles);
       if (this.checkCollision(marble)) {
         this.state = "wait_move";
@@ -101,7 +123,7 @@ export class System {
 
       if (isMoving) {
         this.render();
-        setTimeout(f, PHYSICS_STEP_MS);
+        this.physicsTimer = setTimeout(f, PHYSICS_STEP_MS);
         return;
       }
       this.state = "wait_move";
@@ -111,6 +133,16 @@ export class System {
     };
     f();
     return true;
+  }
+
+  stop() {
+    this.stopped = true;
+    if (this.physicsTimer !== null) {
+      clearTimeout(this.physicsTimer);
+      this.physicsTimer = null;
+    }
+    this.state = "wait_move";
+    this.saveProgress();
   }
 
   private nextTurn() {
@@ -165,42 +197,17 @@ export class System {
   }
 
   private restoreProgress() {
-    try {
-      const serialized = window.localStorage.getItem(SAVE_KEY);
-      if (!serialized) {
-        return;
-      }
-
-      const saved: unknown = JSON.parse(serialized);
-      if (!isSavedProgress(saved)) {
-        return;
-      }
-      if (
-        saved.marbles.length !== this.marbleCount ||
-        saved.mapIndex < 0 ||
-        saved.mapIndex >= GAME_MAPS.length ||
-        saved.turn < 0 ||
-        saved.turn >= this.marbleCount
-      ) {
-        return;
-      }
-      if (
-        saved.marbles.some(
-          (marble) => marble.hole < 0 || marble.hole > GAME_MAPS[saved.mapIndex].holes.length,
-        )
-      ) {
-        return;
-      }
-
-      this.mapIndex = saved.mapIndex;
-      this.turn = saved.turn;
-      this.hasStarted = saved.hasStarted;
-      saved.marbles.forEach((savedMarble, i) => {
-        Object.assign(this.marbles[i], savedMarble);
-      });
-    } catch {
-      // Continue with a fresh game when browser storage is unavailable.
+    const saved = readSavedProgress(this.marbleCount);
+    if (!saved) {
+      return;
     }
+
+    this.mapIndex = saved.mapIndex;
+    this.turn = saved.turn;
+    this.hasStarted = saved.hasStarted;
+    saved.marbles.forEach((savedMarble, i) => {
+      Object.assign(this.marbles[i], savedMarble);
+    });
   }
 
   private saveProgress() {
@@ -254,6 +261,51 @@ export class System {
       mapIndex: this.mapIndex,
       state: this.state,
     });
+  }
+}
+
+export function hasSavedProgress(marbleCount: number) {
+  return readSavedProgress(marbleCount)?.hasStarted ?? false;
+}
+
+export function clearSavedProgress() {
+  try {
+    window.localStorage.removeItem(SAVE_KEY);
+  } catch {
+    // Keep the game usable when browser storage is unavailable.
+  }
+}
+
+function readSavedProgress(marbleCount: number) {
+  try {
+    const serialized = window.localStorage.getItem(SAVE_KEY);
+    if (!serialized) {
+      return null;
+    }
+
+    const saved: unknown = JSON.parse(serialized);
+    if (!isSavedProgress(saved)) {
+      return null;
+    }
+    if (
+      saved.marbles.length !== marbleCount ||
+      saved.mapIndex < 0 ||
+      saved.mapIndex >= GAME_MAPS.length ||
+      saved.turn < 0 ||
+      saved.turn >= marbleCount
+    ) {
+      return null;
+    }
+    if (
+      saved.marbles.some(
+        (marble) => marble.hole < 0 || marble.hole > GAME_MAPS[saved.mapIndex].holes.length,
+      )
+    ) {
+      return null;
+    }
+    return saved;
+  } catch {
+    return null;
   }
 }
 
