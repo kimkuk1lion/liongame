@@ -1,2 +1,6 @@
 export const GAME_WIDTH = 600;
 export const GAME_HEIGHT = 1300;
+export const GAME_WINDOW_WIDTH = 1000;
+export const GAME_TOP_MARGIN = 240;
+export const GAME_BOTTOM_MARGIN = 240;
+export const GAME_WINDOW_HEIGHT = GAME_TOP_MARGIN + GAME_HEIGHT + GAME_BOTTOM_MARGIN;

@@ -1,24 +1,12 @@
 import { Marble } from "./game/Marble";
-
-type Hole = {
-  id: number;
-  x: number;
-  y: number;
-};
-
-const HOLES: Hole[] = [
-  { id: 0, x: 300, y: 950 },
-  { id: 1, x: 300, y: 700 },
-  { id: 2, x: 300, y: 400 },
-  { id: 3, x: 500, y: 400 },
-  { id: 4, x: 100, y: 400 },
-  { id: 5, x: 300, y: 150 },
-];
+import { GAME_MAPS, type GameMap, type Hole } from "./game/maps";
 
 type RenderArgs = {
   turn: number;
   marbles: Marble[];
   holes: Hole[];
+  map: GameMap;
+  mapIndex: number;
   state: State;
 };
 
@@ -34,7 +22,8 @@ const MIN_PULL_DISTANCE = 5;
 export class System {
   private turn: number = 0;
   private marbles: Marble[];
-  private holes: Hole[] = HOLES;
+  private mapIndex = 0;
+  private hasStarted = false;
   private state: State = "wait_move";
 
   constructor(private marbleCount: number, private renderFunction: RenderFunction) {
@@ -56,6 +45,18 @@ export class System {
     return { x: marble.x, y: marble.y };
   }
 
+  selectMap(mapIndex: number) {
+    if (this.hasStarted || this.state !== "wait_move") {
+      return false;
+    }
+    if (mapIndex < 0 || mapIndex >= GAME_MAPS.length) {
+      return false;
+    }
+    this.mapIndex = mapIndex;
+    this.render();
+    return true;
+  }
+
   launchMarble(directionX: number, directionY: number) {
     if (this.state !== "wait_move") {
       return false;
@@ -70,9 +71,10 @@ export class System {
     }
 
     this.state = "moving";
+    this.hasStarted = true;
     marble.inHole = false;
     const f = () => {
-      const isMoving = marble.step();
+      const isMoving = marble.step(this.currentMap.obstacles);
       if (this.checkCollision(marble)) {
         this.state = "wait_move";
         this.nextTurn();
@@ -106,7 +108,7 @@ export class System {
 
   private checkCollision(marble: Marble): boolean {
     if (!marble.lion) {
-      const targetHole = this.holes[marble.hole];
+      const targetHole = this.currentMap.holes[marble.hole];
 
       if (collision(targetHole.x, targetHole.y, marble.x, marble.y, HOLE_RADIUS, MARBLE_RADIUS)) {
         this.nextHole(marble);
@@ -140,21 +142,27 @@ export class System {
   }
 
   private nextHole(marble: Marble) {
-    const targetHole = this.holes[marble.hole];
+    const targetHole = this.currentMap.holes[marble.hole];
     marble.inHole = true;
     marble.x = targetHole.x;
     marble.y = targetHole.y;
     marble.hole += 1;
-    if (marble.hole === this.holes.length) {
+    if (marble.hole === this.currentMap.holes.length) {
       marble.lion = true;
     }
+  }
+
+  private get currentMap() {
+    return GAME_MAPS[this.mapIndex];
   }
 
   render() {
     this.renderFunction({
       turn: this.turn,
-      holes: this.holes,
+      holes: this.currentMap.holes,
       marbles: this.marbles,
+      map: this.currentMap,
+      mapIndex: this.mapIndex,
       state: this.state,
     });
   }

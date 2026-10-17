@@ -1,4 +1,5 @@
 import { GAME_HEIGHT, GAME_WIDTH } from "../constants";
+import type { MapObstacle } from "./maps";
 
 const RADIUS = 25 / 2;
 const FRICTION = 0.975;
@@ -32,7 +33,7 @@ export class Marble {
     return true;
   }
 
-  step() {
+  step(obstacles: readonly MapObstacle[] = []) {
     if (!this.alive || this.inHole) {
       return false;
     }
@@ -40,6 +41,7 @@ export class Marble {
     this.x += this.velocityX;
     this.y += this.velocityY;
     this.bounceAtWalls();
+    this.bounceAtObstacles(obstacles);
 
     this.velocityX *= FRICTION;
     this.velocityY *= FRICTION;
@@ -71,6 +73,30 @@ export class Marble {
     } else if (this.y > maxY) {
       this.y = maxY - (this.y - maxY);
       this.velocityY = -Math.abs(this.velocityY);
+    }
+  }
+
+  private bounceAtObstacles(obstacles: readonly MapObstacle[]) {
+    for (const obstacle of obstacles) {
+      const overlapX = obstacle.width / 2 + RADIUS - Math.abs(this.x - obstacle.x);
+      const overlapY = obstacle.height / 2 + RADIUS - Math.abs(this.y - obstacle.y);
+      if (overlapX <= 0 || overlapY <= 0) {
+        continue;
+      }
+
+      if (overlapX < overlapY) {
+        const side = Math.sign(this.x - obstacle.x) || -Math.sign(this.velocityX) || 1;
+        this.x = obstacle.x + side * (obstacle.width / 2 + RADIUS);
+        if (this.velocityX * side < 0) {
+          this.velocityX *= -1;
+        }
+      } else {
+        const side = Math.sign(this.y - obstacle.y) || -Math.sign(this.velocityY) || 1;
+        this.y = obstacle.y + side * (obstacle.height / 2 + RADIUS);
+        if (this.velocityY * side < 0) {
+          this.velocityY *= -1;
+        }
+      }
     }
   }
 }

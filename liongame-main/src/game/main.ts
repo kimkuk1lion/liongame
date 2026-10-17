@@ -1,4 +1,4 @@
-import { GAME_HEIGHT, GAME_WIDTH } from "../constants";
+import { GAME_WINDOW_HEIGHT, GAME_WINDOW_WIDTH } from "../constants";
 import { Game as MainGame } from "./scenes/Game";
 import { AUTO, Game, Scale, Types } from "phaser";
 
@@ -6,10 +6,10 @@ import { AUTO, Game, Scale, Types } from "phaser";
 // https://docs.phaser.io/api-documentation/typedef/types-core#gameconfig
 const config: Types.Core.GameConfig = {
   type: AUTO,
-  width: GAME_WIDTH,
-  height: GAME_HEIGHT,
+  width: GAME_WINDOW_WIDTH,
+  height: GAME_WINDOW_HEIGHT,
   parent: "game-container",
-  backgroundColor: "#ffffdd",
+  backgroundColor: "#0f0f0f",
   scale: {
     mode: Scale.FIT,
     autoCenter: Scale.CENTER_BOTH,
