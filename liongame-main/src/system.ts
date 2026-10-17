@@ -90,7 +90,7 @@ export class System {
     return true;
   }
 
-  launchMarble(directionX: number, directionY: number) {
+  launchMarble(directionX: number, directionY: number, spreadRadians = 0) {
     if (this.state !== "wait_move") {
       return false;
     }
@@ -99,7 +99,7 @@ export class System {
     }
 
     const marble = this.marbles[this.turn];
-    if (!marble.alive || !marble.launchFromPull(directionX, directionY)) {
+    if (!marble.alive || !marble.launchFromPull(directionX, directionY, spreadRadians)) {
       return false;
     }
 

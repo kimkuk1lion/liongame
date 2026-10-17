@@ -55,7 +55,9 @@ export class Game extends Scene {
       lineSpacing: 10,
     });
     const guideLine = this.add.line(0, 0, 0, 0, 0, 0, 0xff0000, 0.3);
-    guideLine.setLineWidth(20, 1).setDepth(1);
+    guideLine.setLineWidth(10, 1).setDepth(1);
+    const turnMarker = this.add.graphics().setDepth(3);
+    const targetHoleMarker = this.add.graphics().setDepth(2);
     const pullLine = this.add
       .line(0, 0, 0, 0, 0, 0, 0x2774d8, 0.85)
       .setVisible(false)
@@ -66,12 +68,26 @@ export class Game extends Scene {
       .setVisible(false)
       .setDepth(4);
     launchLine.setLineWidth(8, 2);
+    const aimFan = this.add.graphics().setVisible(false).setDepth(2.5);
+    const timingMeter = this.add.container(GAME_WINDOW_WIDTH / 2, GAME_TOP_MARGIN - 42);
+    const timingTrack = this.add.rectangle(0, 0, 280, 14, 0x374151);
+    const timingSweetSpot = this.add.rectangle(0, 0, 32, 24, 0x36b879, 0.9);
+    const timingNeedle = this.add.circle(-140, 0, 11, 0xffffff).setStrokeStyle(3, 0x16202a);
+    const timingCaption = this.add.text(0, -30, "중앙에 가까울수록 원하는 방향으로 발사", {
+      color: "#fff",
+      fontSize: 15,
+      fontStyle: "bold",
+      backgroundColor: "#172534",
+      padding: { x: 8, y: 4 },
+    }).setOrigin(0.5);
+    timingMeter.add([timingTrack, timingSweetSpot, timingNeedle, timingCaption]);
+    timingMeter.setVisible(false);
     const marbleImages: Phaser.GameObjects.Image[] = [];
     const holeImages: Phaser.GameObjects.Image[] = [];
     const marbleLabelTexts: Phaser.GameObjects.Text[] = [];
     let renderedMapIndex = -1;
 
-    board.add([background, terrain, guideLine, pullLine, launchLine, descriptionText]);
+    board.add([background, terrain, guideLine, pullLine, launchLine, aimFan, descriptionText, targetHoleMarker, turnMarker]);
 
     const system = new System(
       4,
@@ -116,7 +132,7 @@ export class Game extends Scene {
           renderedMapIndex = args.mapIndex;
         }
 
-        descriptionText.setText(`맵: ${args.map.name}\n차례: ${args.turn + 1}   상태: ${args.state}`);
+        descriptionText.setText(`맵: ${args.map.name}\n상태: ${args.state}`);
         scoreboardText.setText(
           [
             "점수판",
@@ -128,16 +144,42 @@ export class Game extends Scene {
             }),
           ].join("\n"),
         );
+        holeImages.forEach((hole) => hole.setAlpha(0.24));
+        targetHoleMarker.clear();
+        turnMarker.clear();
+        guideLine.setVisible(false);
         args.marbles.forEach((marble, i) => {
           const myTurn = i === args.turn;
           if (myTurn) {
-            holeImages.forEach((hole, holeIndex) => {
-              const targetHole = holeIndex === marble.hole;
-              hole.setAlpha(targetHole ? 0.95 : 0.35);
-              if (targetHole) {
-                guideLine.setTo(marble.x, marble.y, hole.x, hole.y);
+            const targetHole = !marble.lion ? holeImages[marble.hole] : undefined;
+            if (targetHole) {
+              targetHole.setAlpha(1);
+              guideLine.setTo(marble.x, marble.y, targetHole.x, targetHole.y).setVisible(true);
+              targetHoleMarker.lineStyle(10, 0xffd447, 0.95);
+              targetHoleMarker.strokeCircle(targetHole.x, targetHole.y, 31);
+              targetHoleMarker.lineStyle(3, 0xffffff, 0.9);
+              targetHoleMarker.strokeCircle(targetHole.x, targetHole.y, 40);
+              // Four short ticks make the next destination stand out even on bright maps.
+              targetHoleMarker.lineStyle(5, 0xffd447, 1);
+              for (let tick = 0; tick < 4; tick += 1) {
+                const angle = tick * Math.PI / 2;
+                const inner = 46;
+                const outer = 54;
+                targetHoleMarker.lineBetween(
+                  targetHole.x + Math.cos(angle) * inner,
+                  targetHole.y + Math.sin(angle) * inner,
+                  targetHole.x + Math.cos(angle) * outer,
+                  targetHole.y + Math.sin(angle) * outer,
+                );
               }
-            });
+            }
+            // A bright double ring marks the marble that can be dragged now.
+            turnMarker.fillStyle(0xffd447, 0.2);
+            turnMarker.fillCircle(marble.x, marble.y, 28);
+            turnMarker.lineStyle(5, 0xffd447, 1);
+            turnMarker.strokeCircle(marble.x, marble.y, 29);
+            turnMarker.lineStyle(2, 0xffffff, 0.95);
+            turnMarker.strokeCircle(marble.x, marble.y, 35);
           }
 
           const image = marbleImages[i];
@@ -273,10 +315,30 @@ export class Game extends Scene {
       )
       .setOrigin(0.5);
     let dragOrigin: { x: number; y: number } | null = null;
+    let lastPointer: Phaser.Input.Pointer | null = null;
+    let dragStartedAt = 0;
+    const maxSpreadRadians = (55 * Math.PI) / 180;
+    const timingCycleMs = 1800;
     const toBoardPoint = (pointer: Phaser.Input.Pointer) => ({
       x: pointer.x - boardX,
       y: pointer.y - boardY,
     });
+
+    const getTiming = (now: number) => {
+      const phase = ((now - dragStartedAt) / timingCycleMs) * Math.PI * 2 - Math.PI / 2;
+      const position = Math.sin(phase);
+      const error = Math.abs(position);
+      timingNeedle.setX(position * 132);
+      const accurate = error < 0.14;
+      timingNeedle.setFillStyle(accurate ? 0x72f0ad : error < 0.55 ? 0xffd166 : 0xff6b6b);
+      timingCaption
+        .setText(accurate ? "정확한 타이밍" : "타이밍 오차 · 방향 편차 증가")
+        .setColor(accurate ? "#aaffcc" : "#fff");
+      return {
+        error,
+        spread: (2 * Math.PI) / 180 + error * maxSpreadRadians,
+      };
+    };
 
     const showDrag = (pointer: Phaser.Input.Pointer) => {
       if (!dragOrigin) {
@@ -287,7 +349,28 @@ export class Game extends Scene {
       const pullY = point.y - dragOrigin.y;
       pullLine.setTo(dragOrigin.x, dragOrigin.y, point.x, point.y);
       launchLine.setTo(dragOrigin.x, dragOrigin.y, dragOrigin.x - pullX, dragOrigin.y - pullY);
+      const intendedAngle = Math.atan2(-pullY, -pullX);
+      const { error, spread } = getTiming(performance.now());
+      const fanPoints = [{ x: dragOrigin.x, y: dragOrigin.y }];
+      const fanRadius = 110;
+      const fanSteps = 16;
+      for (let step = 0; step <= fanSteps; step += 1) {
+        const angle = intendedAngle - spread + (spread * 2 * step) / fanSteps;
+        fanPoints.push({
+          x: dragOrigin.x + Math.cos(angle) * fanRadius,
+          y: dragOrigin.y + Math.sin(angle) * fanRadius,
+        });
+      }
+      aimFan.clear();
+      aimFan.fillStyle(error < 0.14 ? 0x42d985 : error < 0.55 ? 0xffc247 : 0xff5757, 0.28);
+      aimFan.fillPoints(fanPoints, true);
     };
+
+    const updateTimingPreview = () => {
+      if (dragOrigin && lastPointer) showDrag(lastPointer);
+    };
+    this.events.on("update", updateTimingPreview);
+    this.events.once("shutdown", () => this.events.off("update", updateTimingPreview));
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       const point = toBoardPoint(pointer);
@@ -295,6 +378,10 @@ export class Game extends Scene {
       if (!dragOrigin) {
         return;
       }
+      dragStartedAt = performance.now();
+      lastPointer = pointer;
+      timingMeter.setVisible(true);
+      aimFan.setVisible(true);
       pullLine.setVisible(true);
       launchLine.setVisible(true);
       showDrag(pointer);
@@ -302,6 +389,7 @@ export class Game extends Scene {
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       if (pointer.isDown) {
+        lastPointer = pointer;
         showDrag(pointer);
       }
     });
@@ -313,10 +401,14 @@ export class Game extends Scene {
       const point = toBoardPoint(pointer);
       const launchX = dragOrigin.x - point.x;
       const launchY = dragOrigin.y - point.y;
+      const { spread } = getTiming(performance.now());
       dragOrigin = null;
+      lastPointer = null;
       pullLine.setVisible(false);
       launchLine.setVisible(false);
-      system.launchMarble(launchX, launchY);
+      aimFan.clear().setVisible(false);
+      timingMeter.setVisible(false);
+      system.launchMarble(launchX, launchY, spread);
     };
 
     this.input.on("pointerup", finishDrag);
