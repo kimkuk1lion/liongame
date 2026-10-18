@@ -26,10 +26,11 @@ type SavedProgress = {
 export type SystemOptions = {
   initialMapIndex?: number;
   resumeSavedGame?: boolean;
+  initialScores?: number[];
 };
 
 type RenderFunction = (args: RenderArgs) => void;
-type State = "wait_move" | "moving";
+type State = "wait_move" | "moving" | "game_over";
 
 const MARBLE_RADIUS = 25 / 2;
 const HOLE_RADIUS = 35 / 2;
@@ -60,8 +61,16 @@ export class System {
     for (let i = 0; i < marbleCount; i += 1) {
       this.marbles.push(new Marble(i, 100 + i * 130, 1200, false, 0, true, true));
     }
+    options.initialScores?.forEach((score, i) => {
+      if (i < this.marbles.length && Number.isInteger(score) && score >= 0) {
+        this.marbles[i].score = score;
+      }
+    });
     if (options.resumeSavedGame) {
       this.restoreProgress();
+    }
+    if (this.hasStarted && this.aliveMarbleCount <= 1) {
+      this.state = "game_over";
     }
   }
 
@@ -114,8 +123,7 @@ export class System {
       }
       const isMoving = marble.step(this.currentMap.obstacles);
       if (this.checkCollision(marble)) {
-        this.state = "wait_move";
-        this.nextTurn();
+        this.finishTurn();
         this.saveProgress();
         this.render();
         return;
@@ -126,8 +134,7 @@ export class System {
         this.physicsTimer = setTimeout(f, PHYSICS_STEP_MS);
         return;
       }
-      this.state = "wait_move";
-      this.nextTurn();
+      this.finishTurn();
       this.saveProgress();
       this.render();
     };
@@ -154,6 +161,19 @@ export class System {
     if (!turnMarble.alive) {
       this.nextTurn();
     }
+  }
+
+  private finishTurn() {
+    if (this.aliveMarbleCount <= 1) {
+      this.state = "game_over";
+      return;
+    }
+    this.state = "wait_move";
+    this.nextTurn();
+  }
+
+  private get aliveMarbleCount() {
+    return this.marbles.filter((marble) => marble.alive).length;
   }
 
   private checkCollision(marble: Marble): boolean {
@@ -261,6 +281,10 @@ export class System {
       mapIndex: this.mapIndex,
       state: this.state,
     });
+  }
+
+  getScores() {
+    return this.marbles.map((marble) => marble.score);
   }
 }
 

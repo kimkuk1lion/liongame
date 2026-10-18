@@ -4,19 +4,22 @@ import {
   GAME_HEIGHT,
   GAME_TOP_MARGIN,
   GAME_WIDTH,
+  GAME_WINDOW_HEIGHT,
   GAME_WINDOW_WIDTH,
 } from "../../constants";
-import { System } from "../../system";
+import { clearSavedProgress, System } from "../../system";
 import { loadSoundSettings, saveSoundSettings } from "../settings";
 
 type GameLaunchData = {
   initialMapIndex?: number;
   resumeSavedGame?: boolean;
+  initialScores?: number[];
 };
 
 export class Game extends Scene {
   private initialMapIndex = 0;
   private resumeSavedGame = false;
+  private initialScores: number[] | undefined;
 
   constructor() {
     super("Game");
@@ -25,6 +28,7 @@ export class Game extends Scene {
   init(data: GameLaunchData = {}) {
     this.initialMapIndex = data.initialMapIndex ?? 0;
     this.resumeSavedGame = data.resumeSavedGame ?? false;
+    this.initialScores = data.initialScores;
   }
 
   preload() {
@@ -82,6 +86,19 @@ export class Game extends Scene {
     }).setOrigin(0.5);
     timingMeter.add([timingTrack, timingSweetSpot, timingNeedle, timingCaption]);
     timingMeter.setVisible(false);
+    const gameOverOverlay = this.add.container(0, 0).setDepth(200).setVisible(false);
+    gameOverOverlay.add([
+      this.add.rectangle(GAME_WINDOW_WIDTH / 2, GAME_WINDOW_HEIGHT / 2, GAME_WINDOW_WIDTH, GAME_WINDOW_HEIGHT, 0x071019, 0.78),
+      this.add.rectangle(GAME_WINDOW_WIDTH / 2, GAME_WINDOW_HEIGHT / 2, 650, 510, 0x1e3441, 1)
+        .setStrokeStyle(4, 0xe4bd68),
+      this.add.text(GAME_WINDOW_WIDTH / 2, GAME_WINDOW_HEIGHT / 2 - 190, "게임 종료", {
+        color: "#fff2ce", fontSize: 46, fontStyle: "bold",
+      }).setOrigin(0.5),
+    ]);
+    const gameOverSummary = this.add.text(GAME_WINDOW_WIDTH / 2, GAME_WINDOW_HEIGHT / 2 - 105, "마지막 구슬만 남았습니다.", {
+      color: "#d9e5e7", fontSize: 21, align: "center", lineSpacing: 8,
+    }).setOrigin(0.5);
+    gameOverOverlay.add(gameOverSummary);
     const marbleImages: Phaser.GameObjects.Image[] = [];
     const holeImages: Phaser.GameObjects.Image[] = [];
     const marbleLabelTexts: Phaser.GameObjects.Text[] = [];
@@ -133,6 +150,10 @@ export class Game extends Scene {
         }
 
         descriptionText.setText(`맵: ${args.map.name}\n상태: ${args.state}`);
+        gameOverSummary.setText(
+          `마지막 구슬만 남았습니다.\n\n${args.marbles.map((marble) => `구슬 ${marble.id + 1}  ${marble.score}점`).join("     ")}`,
+        );
+        gameOverOverlay.setVisible(args.state === "game_over");
         scoreboardText.setText(
           [
             "점수판",
@@ -196,7 +217,41 @@ export class Game extends Scene {
       {
         initialMapIndex: this.initialMapIndex,
         resumeSavedGame: this.resumeSavedGame,
+        initialScores: this.initialScores,
       },
+    );
+    const restartWithScoreChoice = (keepScores: boolean) => {
+      const scores = keepScores ? system.getScores() : undefined;
+      system.stop();
+      clearSavedProgress();
+      this.scene.restart({
+        initialMapIndex: this.initialMapIndex,
+        initialScores: scores,
+      });
+    };
+    const addGameOverButton = (y: number, title: string, subtitle: string, action: () => void) => {
+      const button = this.add.rectangle(GAME_WINDOW_WIDTH / 2, y, 530, 104, 0x31596a, 1)
+        .setStrokeStyle(2, 0xd8b66b).setInteractive({ useHandCursor: true });
+      const titleText = this.add.text(GAME_WINDOW_WIDTH / 2, y - 15, title, {
+        color: "#fff2ce", fontSize: 25, fontStyle: "bold",
+      }).setOrigin(0.5);
+      const subtitleText = this.add.text(GAME_WINDOW_WIDTH / 2, y + 23, subtitle, {
+        color: "#d1e0e2", fontSize: 16,
+      }).setOrigin(0.5);
+      gameOverOverlay.add([button, titleText, subtitleText]);
+      button.on("pointerdown", action);
+    };
+    addGameOverButton(
+      GAME_WINDOW_HEIGHT / 2 + 35,
+      "점수 유지하고 다음 게임",
+      "현재 구슬별 점수를 이어갑니다",
+      () => restartWithScoreChoice(true),
+    );
+    addGameOverButton(
+      GAME_WINDOW_HEIGHT / 2 + 160,
+      "점수 초기화하고 새 게임",
+      "모든 점수를 0점으로 시작합니다",
+      () => restartWithScoreChoice(false),
     );
     this.add.text(
       GAME_WINDOW_WIDTH - 180,
