@@ -5,14 +5,14 @@ body {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: #0f0f0f;
+  background-color: #e8f5fa;
 }
 
 #game-container {
   width: 100vw;
   height: 100vh;
   height: 100dvh;
-  background-color: #0f0f0f;
+  background-color: #e8f5fa;
 }
 
 #game-container canvas {

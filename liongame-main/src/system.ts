@@ -1,4 +1,6 @@
 import { Marble, SCORE_RULES } from "./game/Marble";
+import { GAME_WIDTH } from "./constants";
+import type { SoundEffect } from "./game/audio";
 import { GAME_MAPS, type GameMap, type Hole } from "./game/maps";
 
 type RenderArgs = {
@@ -7,6 +9,7 @@ type RenderArgs = {
   holes: Hole[];
   map: GameMap;
   mapIndex: number;
+  obstaclesEnabled: boolean;
   state: State;
 };
 
@@ -27,6 +30,8 @@ export type SystemOptions = {
   initialMapIndex?: number;
   resumeSavedGame?: boolean;
   initialScores?: number[];
+  obstaclesEnabled?: boolean;
+  onSoundEffect?: (effect: SoundEffect) => void;
 };
 
 type RenderFunction = (args: RenderArgs) => void;
@@ -45,6 +50,8 @@ export class System {
   private mapIndex = 0;
   private hasStarted = false;
   private state: State = "wait_move";
+  private onSoundEffect?: (effect: SoundEffect) => void;
+  private obstaclesEnabled: boolean;
   private physicsTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
 
@@ -53,13 +60,16 @@ export class System {
     private renderFunction: RenderFunction,
     options: SystemOptions = {},
   ) {
+    this.onSoundEffect = options.onSoundEffect;
+    this.obstaclesEnabled = options.obstaclesEnabled ?? true;
     const initialMapIndex = options.initialMapIndex ?? 0;
     if (Number.isInteger(initialMapIndex) && initialMapIndex >= 0 && initialMapIndex < GAME_MAPS.length) {
       this.mapIndex = initialMapIndex;
     }
     this.marbles = [];
     for (let i = 0; i < marbleCount; i += 1) {
-      this.marbles.push(new Marble(i, 100 + i * 130, 1200, false, 0, true, true));
+      const startX = GAME_WIDTH / 2 + (i - (marbleCount - 1) / 2) * 105;
+      this.marbles.push(new Marble(i, startX, 1200, false, 0, true, true));
     }
     options.initialScores?.forEach((score, i) => {
       if (i < this.marbles.length && Number.isInteger(score) && score >= 0) {
@@ -111,6 +121,7 @@ export class System {
     if (!marble.alive || !marble.launchFromPull(directionX, directionY, spreadRadians)) {
       return false;
     }
+    this.onSoundEffect?.("launch");
 
     this.state = "moving";
     this.hasStarted = true;
@@ -121,7 +132,8 @@ export class System {
       if (this.stopped) {
         return;
       }
-      const isMoving = marble.step(this.currentMap.obstacles);
+      const obstacles = this.obstaclesEnabled ? this.currentMap.obstacles : [];
+      const isMoving = marble.step(obstacles, () => this.onSoundEffect?.("bounce"));
       if (this.checkCollision(marble)) {
         this.finishTurn();
         this.saveProgress();
@@ -152,20 +164,34 @@ export class System {
     this.saveProgress();
   }
 
-  private nextTurn() {
-    this.turn += 1;
-    if (this.turn === this.marbleCount) {
-      this.turn = 0;
+  endGame() {
+    if (this.state === "game_over") {
+      return;
     }
-    const turnMarble = this.marbles[this.turn];
-    if (!turnMarble.alive) {
-      this.nextTurn();
+    if (this.physicsTimer !== null) {
+      clearTimeout(this.physicsTimer);
+      this.physicsTimer = null;
+    }
+    this.state = "game_over";
+    this.onSoundEffect?.("gameOver");
+    this.saveProgress();
+    this.render();
+  }
+
+  private nextTurn() {
+    for (let checked = 0; checked < this.marbleCount; checked += 1) {
+      this.turn = (this.turn + 1) % this.marbleCount;
+      if (this.marbles[this.turn].alive) {
+        this.onSoundEffect?.("turn");
+        return;
+      }
     }
   }
 
   private finishTurn() {
     if (this.aliveMarbleCount <= 1) {
       this.state = "game_over";
+      this.onSoundEffect?.("gameOver");
       return;
     }
     this.state = "wait_move";
@@ -181,6 +207,7 @@ export class System {
       const targetHole = this.currentMap.holes[marble.hole];
 
       if (collision(targetHole.x, targetHole.y, marble.x, marble.y, HOLE_RADIUS, MARBLE_RADIUS)) {
+        this.onSoundEffect?.("hole");
         this.nextHole(marble, true);
         return true;
       }
@@ -203,6 +230,7 @@ export class System {
           return true;
         }
 
+        this.onSoundEffect?.("marbleHit");
         this.nextHole(marble);
 
         return true;
@@ -214,6 +242,7 @@ export class System {
   private captureMarble(lion: Marble, victim: Marble) {
     victim.alive = false;
     lion.score += SCORE_RULES.lionCapture;
+    this.onSoundEffect?.("capture");
   }
 
   private restoreProgress() {
@@ -279,6 +308,7 @@ export class System {
       marbles: this.marbles,
       map: this.currentMap,
       mapIndex: this.mapIndex,
+      obstaclesEnabled: this.obstaclesEnabled,
       state: this.state,
     });
   }

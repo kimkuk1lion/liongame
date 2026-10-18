@@ -7,6 +7,7 @@ export type SoundSettings = {
 
 const SOUND_SETTINGS_KEY = "liongame.sound-settings.v1";
 const MAP_SELECTION_KEY = "liongame.map-selection.v1";
+const OBSTACLES_ENABLED_KEY = "liongame.obstacles-enabled.v1";
 
 export function loadSoundSettings(): SoundSettings {
   const defaults: SoundSettings = {
@@ -71,5 +72,22 @@ export function saveMapSelection(mapIndex: number) {
     window.localStorage.setItem(MAP_SELECTION_KEY, String(mapIndex));
   } catch {
     // The lobby remains usable when browser storage is unavailable.
+  }
+}
+
+export function loadObstaclesEnabled() {
+  try {
+    const saved = window.localStorage.getItem(OBSTACLES_ENABLED_KEY);
+    return saved === null ? true : saved !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveObstaclesEnabled(enabled: boolean) {
+  try {
+    window.localStorage.setItem(OBSTACLES_ENABLED_KEY, String(enabled));
+  } catch {
+    // Keep the current selection usable when browser storage is unavailable.
   }
 }

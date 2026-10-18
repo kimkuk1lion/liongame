@@ -41,15 +41,16 @@ export class Marble {
     return true;
   }
 
-  step(obstacles: readonly MapObstacle[] = []) {
+  step(obstacles: readonly MapObstacle[] = [], onBounce?: () => void) {
     if (!this.alive || this.inHole) {
       return false;
     }
 
     this.x += this.velocityX;
     this.y += this.velocityY;
-    this.bounceAtWalls();
-    this.bounceAtObstacles(obstacles);
+    const hitWall = this.bounceAtWalls();
+    const hitObstacle = this.bounceAtObstacles(obstacles);
+    if (hitWall || hitObstacle) onBounce?.();
 
     this.velocityX *= FRICTION;
     this.velocityY *= FRICTION;
@@ -63,14 +64,17 @@ export class Marble {
   }
 
   private bounceAtWalls() {
+    let bounced = false;
     const minX = RADIUS;
     const maxX = GAME_WIDTH - RADIUS;
     if (this.x < minX) {
       this.x = minX + (minX - this.x);
       this.velocityX = Math.abs(this.velocityX);
+      bounced = true;
     } else if (this.x > maxX) {
       this.x = maxX - (this.x - maxX);
       this.velocityX = -Math.abs(this.velocityX);
+      bounced = true;
     }
 
     const minY = RADIUS;
@@ -78,13 +82,17 @@ export class Marble {
     if (this.y < minY) {
       this.y = minY + (minY - this.y);
       this.velocityY = Math.abs(this.velocityY);
+      bounced = true;
     } else if (this.y > maxY) {
       this.y = maxY - (this.y - maxY);
       this.velocityY = -Math.abs(this.velocityY);
+      bounced = true;
     }
+    return bounced;
   }
 
   private bounceAtObstacles(obstacles: readonly MapObstacle[]) {
+    let bounced = false;
     for (const obstacle of obstacles) {
       const overlapX = obstacle.width / 2 + RADIUS - Math.abs(this.x - obstacle.x);
       const overlapY = obstacle.height / 2 + RADIUS - Math.abs(this.y - obstacle.y);
@@ -105,6 +113,8 @@ export class Marble {
           this.velocityY *= -1;
         }
       }
+      bounced = true;
     }
+    return bounced;
   }
 }

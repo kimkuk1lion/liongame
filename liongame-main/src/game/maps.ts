@@ -24,9 +24,9 @@ export type GameMap = {
 export const GAME_MAPS: GameMap[] = [
   {
     name: "초원",
-    backgroundColor: 0xffffdd,
-    obstacleColor: 0x6b8051,
-    obstacleHighlight: 0x9aaf75,
+    backgroundColor: 0xc8edb5,
+    obstacleColor: 0x50885c,
+    obstacleHighlight: 0xa5d48a,
     holes: [
       { id: 0, x: 300, y: 950 },
       { id: 1, x: 300, y: 700 },
@@ -36,16 +36,18 @@ export const GAME_MAPS: GameMap[] = [
       { id: 5, x: 300, y: 150 },
     ],
     obstacles: [
-      { id: "grass-rock-1", x: 195, y: 830, width: 90, height: 38 },
-      { id: "grass-rock-2", x: 405, y: 570, width: 90, height: 38 },
-      { id: "grass-rock-3", x: 205, y: 300, width: 100, height: 34 },
+      { id: "grass-rock-1", x: 180, y: 820, width: 64, height: 18 },
+      { id: "grass-rock-3", x: 205, y: 330, width: 64, height: 18 },
+      { id: "grass-rock-4", x: 430, y: 1050, width: 64, height: 18 },
+      { id: "grass-rock-5", x: 420, y: 610, width: 64, height: 18 },
+      { id: "grass-rock-8", x: 520, y: 170, width: 18, height: 64 },
     ],
   },
   {
     name: "돌기둥",
-    backgroundColor: 0xe8dfc8,
-    obstacleColor: 0x716b63,
-    obstacleHighlight: 0xa9a092,
+    backgroundColor: 0xc9e6e7,
+    obstacleColor: 0x587c89,
+    obstacleHighlight: 0xa5cbd0,
     holes: [
       { id: 0, x: 120, y: 1100 },
       { id: 1, x: 480, y: 900 },
@@ -55,16 +57,18 @@ export const GAME_MAPS: GameMap[] = [
       { id: 5, x: 480, y: 120 },
     ],
     obstacles: [
-      { id: "pillar-1", x: 270, y: 980, width: 60, height: 150 },
-      { id: "pillar-2", x: 270, y: 630, width: 60, height: 150 },
-      { id: "pillar-3", x: 270, y: 280, width: 60, height: 150 },
+      { id: "pillar-1", x: 270, y: 980, width: 24, height: 68 },
+      { id: "pillar-2", x: 320, y: 630, width: 24, height: 68 },
+      { id: "pillar-5", x: 430, y: 760, width: 72, height: 18 },
+      { id: "pillar-6", x: 145, y: 440, width: 72, height: 18 },
+      { id: "pillar-7", x: 400, y: 180, width: 18, height: 68 },
     ],
   },
   {
     name: "협곡",
-    backgroundColor: 0xf0dfc4,
-    obstacleColor: 0x9b6548,
-    obstacleHighlight: 0xc58d65,
+    backgroundColor: 0xffdfa8,
+    obstacleColor: 0xc16f4c,
+    obstacleHighlight: 0xf4b276,
     holes: [
       { id: 0, x: 300, y: 1100 },
       { id: 1, x: 150, y: 870 },
@@ -74,9 +78,11 @@ export const GAME_MAPS: GameMap[] = [
       { id: 5, x: 300, y: 100 },
     ],
     obstacles: [
-      { id: "canyon-1", x: 210, y: 970, width: 180, height: 34 },
-      { id: "canyon-2", x: 210, y: 750, width: 180, height: 34 },
-      { id: "canyon-3", x: 210, y: 310, width: 180, height: 34 },
+      { id: "canyon-1", x: 200, y: 1000, width: 70, height: 18 },
+      { id: "canyon-3", x: 200, y: 500, width: 70, height: 18 },
+      { id: "canyon-5", x: 430, y: 760, width: 70, height: 18 },
+      { id: "canyon-8", x: 300, y: 150, width: 18, height: 64 },
+      { id: "canyon-9", x: 430, y: 300, width: 18, height: 64 },
     ],
   },
 ];
