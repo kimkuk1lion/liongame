@@ -8,6 +8,7 @@ import {
   GAME_WINDOW_WIDTH,
 } from "../../constants";
 import { clearSavedProgress, System } from "../../system";
+import { OnlineRoom, type OnlineRestartInfo, type OnlineShot } from "../online";
 import { playSoundEffect, startBackgroundMusic, updateBackgroundMusic } from "../audio";
 import { loadObstaclesEnabled, loadSoundSettings, saveSoundSettings } from "../settings";
 
@@ -16,6 +17,9 @@ type GameLaunchData = {
   initialPlayerCount?: number;
   resumeSavedGame?: boolean;
   initialScores?: number[];
+  obstaclesEnabled?: boolean;
+  onlineRoom?: OnlineRoom;
+  onlinePlayerIds?: string[];
 };
 
 export class Game extends Scene {
@@ -28,6 +32,10 @@ export class Game extends Scene {
   private devEndWKey?: Phaser.Input.Keyboard.Key;
   private devEndHoldStartedAt: number | null = null;
   private requestEndGame: (() => void) | null = null;
+  private onlineRoom: OnlineRoom | null = null;
+  private onlinePlayerIds: string[] = [];
+  private onlineLocalShotPending = false;
+  private onlineObstaclesEnabled = true;
 
   constructor() {
     super("Game");
@@ -38,6 +46,10 @@ export class Game extends Scene {
     this.initialPlayerCount = Math.max(2, Math.min(4, Math.floor(data.initialPlayerCount ?? 4)));
     this.resumeSavedGame = data.resumeSavedGame ?? false;
     this.initialScores = data.initialScores;
+    this.onlineRoom = data.onlineRoom ?? null;
+    this.onlinePlayerIds = data.onlinePlayerIds ?? [];
+    this.onlineLocalShotPending = false;
+    this.onlineObstaclesEnabled = data.obstaclesEnabled ?? true;
     this.manuallyEnded = false;
     this.devEndHoldStartedAt = null;
     this.requestEndGame = null;
@@ -220,6 +232,7 @@ export class Game extends Scene {
 
     board.add([background, terrain, pullLine, launchLine, aimFan, descriptionText, targetHoleMarker, targetHolePulse, turnMarker]);
 
+    let previousState: "wait_move" | "moving" | "game_over" = "wait_move";
     const system = new System(
       this.initialPlayerCount,
       (args) => {
@@ -279,6 +292,12 @@ export class Game extends Scene {
           });
           renderedMapIndex = args.mapIndex;
         }
+
+        if (this.onlineRoom && this.onlineLocalShotPending && previousState === "moving" && args.state !== "moving") {
+          this.onlineLocalShotPending = false;
+          void this.onlineRoom.sendSnapshot(system.getOnlineSnapshot());
+        }
+        previousState = args.state;
 
         const stateLabel = args.state === "wait_move" ? "구슬을 끌어당겨 보세요"
           : args.state === "moving" ? "구슬 이동 중" : "게임 종료";
@@ -365,21 +384,62 @@ export class Game extends Scene {
         initialMapIndex: this.initialMapIndex,
         resumeSavedGame: this.resumeSavedGame,
         initialScores: this.initialScores,
-        obstaclesEnabled: loadObstaclesEnabled(),
+        obstaclesEnabled: this.onlineRoom ? this.onlineObstaclesEnabled : loadObstaclesEnabled(),
+        persistProgress: !this.onlineRoom,
         onSoundEffect: playSoundEffect,
       },
     );
-    this.requestEndGame = () => system.endGame();
+    if (this.onlineRoom) {
+      const room = this.onlineRoom;
+      room.onShot((shot: OnlineShot) => {
+        if (this.onlinePlayerIds[system.getOnlineSnapshot().turn] !== shot.playerId) return;
+        if (shot.playerId === room.playerId) return;
+        system.launchMarble(shot.directionX, shot.directionY, shot.spreadRadians, shot.randomUnit);
+      });
+      room.onSnapshot((snapshot) => { system.applyOnlineSnapshot(snapshot); });
+      room.onClosed(() => {
+        void room.leave();
+        this.onlineRoom = null;
+        this.scene.start("Lobby");
+      });
+    }
+    this.requestEndGame = () => {
+      if (this.onlineRoom && !this.onlineRoom.isHost) return;
+      system.endGame();
+      if (this.onlineRoom) void this.onlineRoom.sendSnapshot(system.getOnlineSnapshot());
+    };
+    const restartOnlineGame = (initialMapIndex: number, initialScores?: number[]) => {
+      system.stop();
+      this.scene.restart({
+        initialMapIndex,
+        initialPlayerCount: this.initialPlayerCount,
+        initialScores,
+        obstaclesEnabled: this.onlineRoom ? this.onlineObstaclesEnabled : undefined,
+        onlineRoom: this.onlineRoom ?? undefined,
+        onlinePlayerIds: this.onlinePlayerIds,
+      });
+    };
+    this.onlineRoom?.onGameRestarted((info: OnlineRestartInfo) => {
+      restartOnlineGame(info.initialMapIndex, info.initialScores);
+    });
     const restartWithScoreChoice = (keepScores: boolean) => {
+      if (this.onlineRoom && !this.onlineRoom.isHost) return;
       playSoundEffect("ui");
       const scores = keepScores ? system.getScores() : undefined;
-      system.stop();
-      clearSavedProgress();
-      this.scene.restart({
-        initialMapIndex: this.initialMapIndex,
-        initialPlayerCount: this.initialPlayerCount,
-        initialScores: scores,
-      });
+      if (this.onlineRoom) {
+        const info = { initialMapIndex: this.initialMapIndex, initialScores: scores };
+        void this.onlineRoom.restartGame(info).then((sent) => {
+          if (sent) restartOnlineGame(info.initialMapIndex, info.initialScores);
+        });
+      } else {
+        system.stop();
+        clearSavedProgress();
+        this.scene.restart({
+          initialMapIndex: this.initialMapIndex,
+          initialPlayerCount: this.initialPlayerCount,
+          initialScores: scores,
+        });
+      }
     };
     const addGameOverButton = (y: number, title: string, subtitle: string, action: () => void) => {
       const buttonArt = this.add.graphics();
@@ -510,6 +570,11 @@ export class Game extends Scene {
       .on("pointerdown", () => {
         playSoundEffect("ui");
         system.stop();
+        if (this.onlineRoom) {
+          const room = this.onlineRoom;
+          if (room.isHost) void room.close(); else void room.leave();
+          this.onlineRoom = null;
+        }
         this.scene.start("Lobby");
       });
 
@@ -590,6 +655,7 @@ export class Game extends Scene {
     this.events.once("shutdown", () => this.events.off("update", updateTimingPreview));
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (this.onlineRoom && this.onlinePlayerIds[system.getOnlineSnapshot().turn] !== this.onlineRoom.playerId) return;
       const point = toBoardPoint(pointer);
       dragOrigin = system.getDraggableMarblePosition(point.x, point.y);
       if (!dragOrigin) {
@@ -625,7 +691,23 @@ export class Game extends Scene {
       launchLine.setVisible(false);
       aimFan.clear().setVisible(false);
       timingMeter.setVisible(false);
-      system.launchMarble(launchX, launchY, spread);
+      if (this.onlineRoom) {
+        const randomUnit = Math.random();
+        const shot: OnlineShot = {
+          playerId: this.onlineRoom.playerId,
+          directionX: launchX,
+          directionY: launchY,
+          spreadRadians: spread,
+          randomUnit,
+        };
+        this.onlineLocalShotPending = true;
+        void this.onlineRoom.sendShot(shot).then((sent) => {
+          if (sent) system.launchMarble(launchX, launchY, spread, randomUnit);
+          else this.onlineLocalShotPending = false;
+        });
+      } else {
+        system.launchMarble(launchX, launchY, spread);
+      }
     };
 
     this.input.on("pointerup", finishDrag);

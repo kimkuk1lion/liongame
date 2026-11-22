@@ -2,6 +2,7 @@ import { Scene } from "phaser";
 import { GAME_WINDOW_HEIGHT, GAME_WINDOW_WIDTH } from "../../constants";
 import { clearSavedProgress, hasSavedProgress } from "../../system";
 import { GAME_MAPS } from "../maps";
+import { isOnlineConfigured, OnlineRoom, type OnlinePlayer, type OnlineStartInfo } from "../online";
 import { playSoundEffect, startBackgroundMusic, updateBackgroundMusic } from "../audio";
 import {
   loadMapSelection,
@@ -19,6 +20,8 @@ export class Lobby extends Scene {
   private playerCount = 4;
   private obstaclesEnabled = true;
   private soundSettings = loadSoundSettings();
+  private onlineRoom: OnlineRoom | null = null;
+  private onlineMessage = "";
 
   constructor() {
     super("Lobby");
@@ -61,8 +64,8 @@ export class Lobby extends Scene {
       decor.fillStyle(color, 0.74).fillCircle(x, y, radius);
       decor.fillStyle(0xffffff, 0.42).fillCircle(x - radius * 0.3, y - radius * 0.35, Math.max(3, radius * 0.2));
     });
-    decor.fillStyle(0xffffff, 0.45).fillRoundedRect(44, 748, 912, 445, 42);
-    decor.lineStyle(2, 0xffffff, 0.8).strokeRoundedRect(44, 748, 912, 445, 42);
+    decor.fillStyle(0xffffff, 0.45).fillRoundedRect(20, 748, 1040, 445, 42);
+    decor.lineStyle(2, 0xffffff, 0.8).strokeRoundedRect(20, 748, 1040, 445, 42);
   }
 
   private drawMascot(x: number, y: number) {
@@ -104,9 +107,10 @@ export class Lobby extends Scene {
   private showMenu() {
     this.clearView();
     const cards = [
-      { x: 205, title: "게임 시작", sub: "이어하기 · 새 게임", action: () => this.showStart(), icon: "play", color: 0x38a888 },
-      { x: 500, title: "사운드 설정", sub: "배경음악 · 효과음", action: () => this.showSound(), icon: "sound", color: 0xe2a844 },
-      { x: 795, title: "맵 선택", sub: `현재 맵 · ${GAME_MAPS[this.selectedMap].name}`, action: () => this.showMap(), icon: "map", color: 0x598dcc },
+      { x: 135, title: "게임 시작", sub: "이어하기 · 새 게임", action: () => this.showStart(), icon: "play", color: 0x38a888 },
+      { x: 405, title: "온라인 대전", sub: "방 만들기 · 코드 참가", action: () => this.showOnline(), icon: "online", color: 0x598dcc },
+      { x: 675, title: "사운드 설정", sub: "배경음악 · 효과음", action: () => this.showSound(), icon: "sound", color: 0xe2a844 },
+      { x: 945, title: "맵 선택", sub: `현재 맵 · ${GAME_MAPS[this.selectedMap].name}`, action: () => this.showMap(), icon: "map", color: 0x598dcc },
     ];
     cards.forEach((card) => {
       const y = 940;
@@ -149,6 +153,11 @@ export class Lobby extends Scene {
       ], true);
       g.lineStyle(7, 0xffe6a6, 1).beginPath().arc(x + 7, y, 31, -0.85, 0.85, false).strokePath();
       g.lineStyle(6, 0xffe6a6, 0.8).beginPath().arc(x + 7, y, 48, -0.75, 0.75, false).strokePath();
+    } else if (kind === "online") {
+      g.lineStyle(8, 0xffe6a6, 1).strokeCircle(x - 18, y, 28);
+      g.lineStyle(8, 0xffe6a6, 1).strokeCircle(x + 18, y, 28);
+      g.lineBetween(x - 2, y - 18, x + 2, y - 18);
+      g.lineBetween(x - 2, y + 18, x + 2, y + 18);
     } else {
       g.lineStyle(7, 0xffe6a6, 1).beginPath().moveTo(x - 43, y - 28).lineTo(x - 8, y - 38)
         .lineTo(x + 12, y - 24).lineTo(x + 43, y - 34).lineTo(x + 43, y + 29)
@@ -167,7 +176,7 @@ export class Lobby extends Scene {
     }).setOrigin(0.5));
   }
 
-  private addBackButton(y = 1450) {
+  private addBackButton(y = 1450, action: () => void = () => this.showMenu()) {
     this.keep(this.add.graphics()).fillStyle(0x254f64, 1)
       .fillRoundedRect(GAME_WINDOW_WIDTH / 2 - 150, y - 30, 300, 60, 26);
     const back = this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, y, "← 로비로 돌아가기", {
@@ -175,7 +184,7 @@ export class Lobby extends Scene {
     }).setOrigin(0.5).setInteractive({ useHandCursor: true }));
     back.on("pointerdown", () => {
       playSoundEffect("ui");
-      this.showMenu();
+      action();
     });
   }
 
@@ -197,6 +206,138 @@ export class Lobby extends Scene {
       });
     }
     this.addBackButton();
+  }
+
+  private showOnline() {
+    this.clearView();
+    this.addHeading("온라인 대전");
+    if (!isOnlineConfigured()) {
+      this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 820, "온라인 설정이 아직 연결되지 않았습니다.\n관리자가 배포 설정을 확인해 주세요.", {
+        color: "#a9543d", fontSize: 21, align: "center", lineSpacing: 12,
+      }).setOrigin(0.5));
+      this.addBackButton();
+      return;
+    }
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 780, "방을 만들고 8자리 코드를 친구에게 알려 주세요.", {
+      color: "#315a69", fontSize: 20, fontStyle: "bold",
+    }).setOrigin(0.5));
+    this.addActionButton(950, "방 만들기", "내가 방장이 되어 게임을 시작합니다", () => { void this.createOnlineRoom(); });
+    this.addActionButton(1130, "코드로 참가", "친구가 알려준 8자리 방 코드 입력", () => { void this.joinOnlineRoom(); });
+    if (this.onlineMessage) this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1290, this.onlineMessage, {
+      color: "#a9543d", fontSize: 17, align: "center", wordWrap: { width: 720 },
+    }).setOrigin(0.5));
+    this.addBackButton();
+  }
+
+  private async createOnlineRoom() {
+    this.onlineMessage = "방을 만들고 있습니다…";
+    this.showOnline();
+    try {
+      this.onlineRoom = await OnlineRoom.create();
+      this.showWaitingRoom();
+    } catch (error) {
+      this.onlineMessage = error instanceof Error ? error.message : "방을 만들지 못했습니다.";
+      this.showOnline();
+    }
+  }
+
+  private async joinOnlineRoom() {
+    const code = window.prompt("친구에게 받은 8자리 방 코드를 입력해 주세요.");
+    if (!code) return;
+    this.onlineMessage = "방에 참가하고 있습니다…";
+    this.showOnline();
+    try {
+      this.onlineRoom = await OnlineRoom.join(code);
+      this.showWaitingRoom();
+    } catch (error) {
+      this.onlineMessage = error instanceof Error ? error.message : "방에 참가하지 못했습니다.";
+      this.showOnline();
+    }
+  }
+
+  private showWaitingRoom() {
+    const room = this.onlineRoom;
+    if (!room) return;
+    this.clearView();
+    this.addHeading("대기실");
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 760, "방 코드", {
+      color: "#607887", fontSize: 18, fontStyle: "bold",
+    }).setOrigin(0.5));
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 825, room.code, {
+      color: "#244657", fontSize: 52, fontStyle: "bold", letterSpacing: 8,
+    }).setOrigin(0.5));
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 900, "참가자", {
+      color: "#315a69", fontSize: 20, fontStyle: "bold",
+    }).setOrigin(0.5));
+    const roster = this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1015, "연결 중…", {
+      color: "#315a69", fontSize: 22, align: "center", lineSpacing: 16,
+    }).setOrigin(0.5));
+    const updateRoster = (players: OnlinePlayer[]) => {
+      if (!roster.active) return;
+      roster.setText(players.slice(0, 4).map((player, index) =>
+        `플레이어 ${index + 1}${player.isHost ? " · 방장" : ""}${player.playerId === room.playerId ? " (나)" : ""}`,
+      ).join("\n"));
+      startButton?.setAlpha(room.isHost && players.length >= 2 ? 1 : 0.45);
+    };
+    let startButton: Phaser.GameObjects.Rectangle | null = null;
+    room.onPlayersChanged(updateRoster);
+    room.onClosed(() => {
+      void room.leave();
+      this.onlineRoom = null;
+      this.onlineMessage = "방장이 대기실을 종료했습니다.";
+      this.showOnline();
+    });
+    if (room.isHost) {
+      const buttonY = 1220;
+      this.keep(this.add.graphics()).fillStyle(0x38a888, 1).fillRoundedRect(255, buttonY - 58, 570, 116, 25);
+      startButton = this.keep(this.add.rectangle(GAME_WINDOW_WIDTH / 2, buttonY, 570, 116, 0xffffff, 0.001)
+        .setInteractive({ useHandCursor: true }));
+      this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, buttonY - 12, "게임 시작", {
+        color: "#ffffff", fontSize: 28, fontStyle: "bold",
+      }).setOrigin(0.5));
+      this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, buttonY + 25, "2~4명이 모이면 시작할 수 있습니다", {
+        color: "#e5f8f1", fontSize: 15,
+      }).setOrigin(0.5));
+      startButton.on("pointerdown", () => {
+        const players = room.players.slice(0, 4);
+        if (players.length < 2 || players.length > 4) return;
+        const info: OnlineStartInfo = {
+          mapIndex: this.selectedMap,
+          obstaclesEnabled: this.obstaclesEnabled,
+          playerIds: players.map((player) => player.playerId),
+        };
+        void room.startGame(info).then((sent) => {
+          if (sent) this.launchOnlineGame(room, info);
+        });
+      });
+    } else {
+      this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1220, "방장이 게임을 시작할 때까지 기다려 주세요.", {
+        color: "#607887", fontSize: 19,
+      }).setOrigin(0.5));
+      room.onGameStarted((info) => this.launchOnlineGame(room, info));
+    }
+    updateRoster(room.players);
+    this.addBackButton(1450, () => {
+      if (room.isHost) void room.close(); else void room.leave();
+      this.onlineRoom = null;
+      this.showMenu();
+    });
+  }
+
+  private launchOnlineGame(room: OnlineRoom, info: OnlineStartInfo) {
+    if (this.onlineRoom !== room) return;
+    if (
+      info.playerIds.length < 2 || info.playerIds.length > 4 ||
+      !info.playerIds.includes(room.playerId) ||
+      !Number.isInteger(info.mapIndex) || info.mapIndex < 0 || info.mapIndex >= GAME_MAPS.length
+    ) return;
+    this.scene.start("Game", {
+      initialMapIndex: info.mapIndex,
+      initialPlayerCount: info.playerIds.length,
+      obstaclesEnabled: info.obstaclesEnabled,
+      onlineRoom: room,
+      onlinePlayerIds: info.playerIds,
+    });
   }
 
   private drawPlayerCountPicker() {

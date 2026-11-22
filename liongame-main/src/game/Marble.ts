@@ -27,7 +27,7 @@ export class Marble {
     public score = 0,
   ) {}
 
-  launchFromPull(directionX: number, directionY: number, spreadRadians = 0) {
+  launchFromPull(directionX: number, directionY: number, spreadRadians = 0, randomUnit = Math.random()) {
     const pullDistance = Math.hypot(directionX, directionY);
     if (pullDistance === 0) {
       return false;
@@ -35,7 +35,7 @@ export class Marble {
 
     const speed = Math.min(pullDistance * SPEED_PER_PULL_DISTANCE, MAX_SPEED);
     const intendedAngle = Math.atan2(directionY, directionX);
-    const randomAngle = intendedAngle + (Math.random() * 2 - 1) * spreadRadians;
+    const randomAngle = intendedAngle + (randomUnit * 2 - 1) * spreadRadians;
     this.velocityX = Math.cos(randomAngle) * speed;
     this.velocityY = Math.sin(randomAngle) * speed;
     return true;

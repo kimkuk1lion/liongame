@@ -17,6 +17,7 @@
     "vite": "^6.3.1"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.2",
     "phaser": "^3.90.0",
     "terser": "^5.39.0"
   }

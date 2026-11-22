@@ -1,1 +1,4 @@
 게임 수정사항.docx
+.env
+.env.*
+!.env.example

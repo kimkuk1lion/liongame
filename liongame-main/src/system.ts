@@ -13,7 +13,7 @@ type RenderArgs = {
   state: State;
 };
 
-type SavedMarble = Pick<
+export type SavedMarble = Pick<
   Marble,
   "id" | "x" | "y" | "lion" | "hole" | "alive" | "inHole" | "score"
 >;
@@ -26,11 +26,21 @@ type SavedProgress = {
   marbles: SavedMarble[];
 };
 
+export type GameSnapshot = {
+  turn: number;
+  mapIndex: number;
+  hasStarted: boolean;
+  obstaclesEnabled: boolean;
+  state: State;
+  marbles: SavedMarble[];
+};
+
 export type SystemOptions = {
   initialMapIndex?: number;
   resumeSavedGame?: boolean;
   initialScores?: number[];
   obstaclesEnabled?: boolean;
+  persistProgress?: boolean;
   onSoundEffect?: (effect: SoundEffect) => void;
 };
 
@@ -52,6 +62,7 @@ export class System {
   private state: State = "wait_move";
   private onSoundEffect?: (effect: SoundEffect) => void;
   private obstaclesEnabled: boolean;
+  private persistProgress: boolean;
   private physicsTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
 
@@ -62,6 +73,7 @@ export class System {
   ) {
     this.onSoundEffect = options.onSoundEffect;
     this.obstaclesEnabled = options.obstaclesEnabled ?? true;
+    this.persistProgress = options.persistProgress ?? true;
     const initialMapIndex = options.initialMapIndex ?? 0;
     if (Number.isInteger(initialMapIndex) && initialMapIndex >= 0 && initialMapIndex < GAME_MAPS.length) {
       this.mapIndex = initialMapIndex;
@@ -109,7 +121,7 @@ export class System {
     return true;
   }
 
-  launchMarble(directionX: number, directionY: number, spreadRadians = 0) {
+  launchMarble(directionX: number, directionY: number, spreadRadians = 0, randomUnit = Math.random()) {
     if (this.state !== "wait_move") {
       return false;
     }
@@ -118,7 +130,7 @@ export class System {
     }
 
     const marble = this.marbles[this.turn];
-    if (!marble.alive || !marble.launchFromPull(directionX, directionY, spreadRadians)) {
+    if (!marble.alive || !marble.launchFromPull(directionX, directionY, spreadRadians, randomUnit)) {
       return false;
     }
     this.onSoundEffect?.("launch");
@@ -260,6 +272,7 @@ export class System {
   }
 
   private saveProgress() {
+    if (!this.persistProgress) return;
     try {
       const saved: SavedProgress = {
         version: 1,
@@ -311,6 +324,41 @@ export class System {
       obstaclesEnabled: this.obstaclesEnabled,
       state: this.state,
     });
+  }
+
+  getOnlineSnapshot(): GameSnapshot {
+    return {
+      turn: this.turn,
+      mapIndex: this.mapIndex,
+      hasStarted: this.hasStarted,
+      obstaclesEnabled: this.obstaclesEnabled,
+      state: this.state,
+      marbles: this.marbles.map(({ id, x, y, lion, hole, alive, inHole, score }) => ({
+        id, x, y, lion, hole, alive, inHole, score,
+      })),
+    };
+  }
+
+  applyOnlineSnapshot(snapshot: GameSnapshot) {
+    if (
+      snapshot.marbles.length !== this.marbleCount ||
+      snapshot.mapIndex < 0 || snapshot.mapIndex >= GAME_MAPS.length ||
+      snapshot.turn < 0 || snapshot.turn >= this.marbleCount
+    ) {
+      return false;
+    }
+    if (this.physicsTimer !== null) {
+      clearTimeout(this.physicsTimer);
+      this.physicsTimer = null;
+    }
+    this.turn = snapshot.turn;
+    this.mapIndex = snapshot.mapIndex;
+    this.hasStarted = snapshot.hasStarted;
+    this.obstaclesEnabled = snapshot.obstaclesEnabled;
+    this.state = snapshot.state;
+    snapshot.marbles.forEach((marble, index) => Object.assign(this.marbles[index], marble));
+    this.render();
+    return true;
   }
 
   getScores() {
