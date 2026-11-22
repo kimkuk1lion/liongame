@@ -2,7 +2,14 @@ import { Scene } from "phaser";
 import { GAME_WINDOW_HEIGHT, GAME_WINDOW_WIDTH } from "../../constants";
 import { clearSavedProgress, hasSavedProgress } from "../../system";
 import { GAME_MAPS } from "../maps";
-import { isOnlineConfigured, OnlineRoom, type OnlinePlayer, type OnlineStartInfo } from "../online";
+import {
+  isOnlineConfigured,
+  OnlineDirectory,
+  OnlineRoom,
+  type OnlinePlayer,
+  type OnlineRoomListing,
+  type OnlineStartInfo,
+} from "../online";
 import { playSoundEffect, startBackgroundMusic, updateBackgroundMusic } from "../audio";
 import {
   loadMapSelection,
@@ -22,6 +29,10 @@ export class Lobby extends Scene {
   private soundSettings = loadSoundSettings();
   private onlineRoom: OnlineRoom | null = null;
   private onlineMessage = "";
+  private onlineDirectory: OnlineDirectory | null = null;
+  private onlineListings: OnlineRoomListing[] = [];
+  private onlineScreenActive = false;
+  private onlineDirectoryConnecting = false;
 
   constructor() {
     super("Lobby");
@@ -93,6 +104,7 @@ export class Lobby extends Scene {
   }
 
   private clearView() {
+    this.onlineScreenActive = false;
     this.viewCleanups.forEach((cleanup) => cleanup());
     this.viewCleanups = [];
     this.viewObjects.forEach((object) => object.destroy());
@@ -108,7 +120,7 @@ export class Lobby extends Scene {
     this.clearView();
     const cards = [
       { x: 135, title: "게임 시작", sub: "이어하기 · 새 게임", action: () => this.showStart(), icon: "play", color: 0x38a888 },
-      { x: 405, title: "온라인 대전", sub: "방 만들기 · 코드 참가", action: () => this.showOnline(), icon: "online", color: 0x598dcc },
+      { x: 405, title: "온라인 대전", sub: "방 만들기 · 방 목록 참가", action: () => this.showOnline(), icon: "online", color: 0x598dcc },
       { x: 675, title: "사운드 설정", sub: "배경음악 · 효과음", action: () => this.showSound(), icon: "sound", color: 0xe2a844 },
       { x: 945, title: "맵 선택", sub: `현재 맵 · ${GAME_MAPS[this.selectedMap].name}`, action: () => this.showMap(), icon: "map", color: 0x598dcc },
     ];
@@ -210,6 +222,7 @@ export class Lobby extends Scene {
 
   private showOnline() {
     this.clearView();
+    this.onlineScreenActive = true;
     this.addHeading("온라인 대전");
     if (!isOnlineConfigured()) {
       this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 820, "온라인 설정이 아직 연결되지 않았습니다.\n관리자가 배포 설정을 확인해 주세요.", {
@@ -218,22 +231,98 @@ export class Lobby extends Scene {
       this.addBackButton();
       return;
     }
-    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 780, "방을 만들고 8자리 코드를 친구에게 알려 주세요.", {
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 755, "공개 대기실에서 방을 골라 입장할 수 있습니다.", {
       color: "#315a69", fontSize: 20, fontStyle: "bold",
     }).setOrigin(0.5));
-    this.addActionButton(950, "방 만들기", "내가 방장이 되어 게임을 시작합니다", () => { void this.createOnlineRoom(); });
-    this.addActionButton(1130, "코드로 참가", "친구가 알려준 8자리 방 코드 입력", () => { void this.joinOnlineRoom(); });
-    if (this.onlineMessage) this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1290, this.onlineMessage, {
+    this.addActionButton(865, "방 만들기", "제목과 비밀번호를 정해 대기실을 엽니다", () => { void this.createOnlineRoom(); });
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 965, "참여 가능한 방", {
+      color: "#315a69", fontSize: 22, fontStyle: "bold",
+    }).setOrigin(0.5));
+    if (!this.onlineDirectory) {
+      this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1100, this.onlineMessage || "방 목록을 불러오는 중…", {
+        color: "#607887", fontSize: 18, align: "center", wordWrap: { width: 690 },
+      }).setOrigin(0.5));
+      void this.connectOnlineDirectory();
+    } else if (this.onlineListings.length === 0) {
+      this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1100, "현재 열려 있는 방이 없습니다.\n새 방을 만들어 다른 플레이어를 초대해 보세요.", {
+        color: "#607887", fontSize: 18, align: "center", lineSpacing: 10,
+      }).setOrigin(0.5));
+    } else {
+      this.onlineListings.slice(0, 4).forEach((listing, index) => this.drawOnlineRoomRow(listing, 1030 + index * 104));
+    }
+    if (this.onlineMessage) this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1450, this.onlineMessage, {
       color: "#a9543d", fontSize: 17, align: "center", wordWrap: { width: 720 },
     }).setOrigin(0.5));
-    this.addBackButton();
+    this.addBackButton(1600);
+  }
+
+  private async connectOnlineDirectory() {
+    if (this.onlineDirectoryConnecting || this.onlineDirectory) return;
+    this.onlineDirectoryConnecting = true;
+    try {
+      const directory = new OnlineDirectory();
+      await directory.connect();
+      this.onlineDirectory = directory;
+      directory.onRoomsChanged((rooms) => {
+        this.onlineListings = rooms;
+        if (this.onlineScreenActive) this.showOnline();
+      });
+    } catch (error) {
+      this.onlineMessage = error instanceof Error ? error.message : "방 목록을 불러오지 못했습니다.";
+      if (this.onlineScreenActive) this.showOnline();
+    } finally {
+      this.onlineDirectoryConnecting = false;
+    }
+  }
+
+  private drawOnlineRoomRow(listing: OnlineRoomListing, y: number) {
+    const x = GAME_WINDOW_WIDTH / 2;
+    const width = 760;
+    const height = 88;
+    this.keep(this.add.graphics()).fillStyle(0xd7e5df, 0.65)
+      .fillRoundedRect(x - width / 2, y - height / 2 + 5, width, height, 20);
+    this.keep(this.add.graphics()).fillStyle(0xf5f0df, 1).fillRoundedRect(x - width / 2, y - height / 2, width, height, 20)
+      .lineStyle(2, 0xffffff, 0.95).strokeRoundedRect(x - width / 2, y - height / 2, width, height, 20);
+    this.keep(this.add.text(x - width / 2 + 24, y - 15, `${listing.hasPassword ? "🔒 " : ""}${listing.title}`, {
+      color: "#244657", fontSize: 19, fontStyle: "bold", wordWrap: { width: 500 },
+    }).setOrigin(0, 0.5));
+    this.keep(this.add.text(x + width / 2 - 24, y - 15, `${listing.playerCount}/4`, {
+      color: "#42636e", fontSize: 17, fontStyle: "bold",
+    }).setOrigin(1, 0.5));
+    this.keep(this.add.text(x + width / 2 - 24, y + 17, "참가하기 →", {
+      color: "#27856f", fontSize: 14, fontStyle: "bold",
+    }).setOrigin(1, 0.5));
+    this.keep(this.add.rectangle(x, y, width, height, 0xffffff, 0.001)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerdown", () => { void this.joinOnlineRoom(listing); }));
   }
 
   private async createOnlineRoom() {
+    if (!this.onlineDirectory) return;
+    const titleInput = window.prompt("방 제목을 입력해 주세요. (2~24자)");
+    if (titleInput === null) return;
+    const title = titleInput.trim().slice(0, 24);
+    if (title.length < 2) {
+      this.onlineMessage = "방 제목은 2자 이상 입력해 주세요.";
+      this.showOnline();
+      return;
+    }
+    const hasPassword = window.confirm("비밀번호가 있는 방으로 만들까요?");
+    let password = "";
+    if (hasPassword) {
+      const input = window.prompt("방 비밀번호를 입력해 주세요. (4자 이상)");
+      if (input === null) return;
+      password = input.trim();
+      if (password.length < 4) {
+        this.onlineMessage = "비밀번호는 4자 이상 입력해 주세요.";
+        this.showOnline();
+        return;
+      }
+    }
     this.onlineMessage = "방을 만들고 있습니다…";
     this.showOnline();
     try {
-      this.onlineRoom = await OnlineRoom.create();
+      this.onlineRoom = await OnlineRoom.create(title, password, this.onlineDirectory);
       this.showWaitingRoom();
     } catch (error) {
       this.onlineMessage = error instanceof Error ? error.message : "방을 만들지 못했습니다.";
@@ -241,13 +330,19 @@ export class Lobby extends Scene {
     }
   }
 
-  private async joinOnlineRoom() {
-    const code = window.prompt("친구에게 받은 8자리 방 코드를 입력해 주세요.");
-    if (!code) return;
+  private async joinOnlineRoom(listing: OnlineRoomListing) {
+    if (!this.onlineDirectory) return;
+    if (listing.playerCount >= 4) {
+      this.onlineMessage = "이미 최대 인원이 참가한 방입니다.";
+      this.showOnline();
+      return;
+    }
+    const password = listing.hasPassword ? window.prompt("방 비밀번호를 입력해 주세요.") : "";
+    if (password === null) return;
     this.onlineMessage = "방에 참가하고 있습니다…";
     this.showOnline();
     try {
-      this.onlineRoom = await OnlineRoom.join(code);
+      this.onlineRoom = await OnlineRoom.join(listing, password, this.onlineDirectory);
       this.showWaitingRoom();
     } catch (error) {
       this.onlineMessage = error instanceof Error ? error.message : "방에 참가하지 못했습니다.";
@@ -260,11 +355,11 @@ export class Lobby extends Scene {
     if (!room) return;
     this.clearView();
     this.addHeading("대기실");
-    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 760, "방 코드", {
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 770, room.title, {
       color: "#607887", fontSize: 18, fontStyle: "bold",
     }).setOrigin(0.5));
-    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 825, room.code, {
-      color: "#244657", fontSize: 52, fontStyle: "bold", letterSpacing: 8,
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 825, room.hasPassword ? "🔒 비밀번호 방" : "🔓 공개 방", {
+      color: "#244657", fontSize: 30, fontStyle: "bold",
     }).setOrigin(0.5));
     this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 900, "참가자", {
       color: "#315a69", fontSize: 20, fontStyle: "bold",

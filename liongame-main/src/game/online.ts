@@ -28,6 +28,20 @@ export type OnlineRestartInfo = {
 
 type PresenceMember = OnlinePlayer & { presence_ref?: string };
 
+export type OnlineRoomListing = {
+  code: string;
+  title: string;
+  hasPassword: boolean;
+  playerCount: number;
+};
+
+type DirectoryMember = {
+  playerId: string;
+  roomCode?: string | null;
+  roomListing?: { code: string; title: string; hasPassword: boolean; status: "waiting" | "playing" };
+  presence_ref?: string;
+};
+
 const projectUrl = import.meta.env.VITE_SUPABASE_URL;
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
@@ -37,6 +51,87 @@ const supabase = projectUrl && publishableKey
 
 export function isOnlineConfigured() {
   return supabase !== null;
+}
+
+export class OnlineDirectory {
+  readonly playerId = createId();
+  private channel: RealtimeChannel | null = null;
+  private roomsChanged?: (rooms: OnlineRoomListing[]) => void;
+  private currentRoomCode: string | null = null;
+  private listing: DirectoryMember["roomListing"];
+
+  async connect() {
+    if (!supabase) throw new Error("온라인 연결 설정을 찾을 수 없습니다.");
+    const channel = supabase.channel("lion-game-room-directory", {
+      config: { presence: { key: this.playerId }, private: false },
+    });
+    this.channel = channel;
+    channel.on("presence", { event: "sync" }, () => this.roomsChanged?.(this.rooms));
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("방 목록 연결 시간이 초과됐습니다.")), 10000);
+      channel.subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          window.clearTimeout(timeout);
+          try {
+            await this.track();
+            resolve();
+          } catch {
+            reject(new Error("방 목록을 불러오지 못했습니다."));
+          }
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          window.clearTimeout(timeout);
+          reject(new Error("온라인 방 목록에 연결하지 못했습니다."));
+        }
+      });
+    }).catch(async (error) => {
+      await this.disconnect();
+      throw error;
+    });
+  }
+
+  get rooms(): OnlineRoomListing[] {
+    if (!this.channel) return [];
+    const members = Object.values(this.channel.presenceState<DirectoryMember>()).flat();
+    const listings = new Map<string, OnlineRoomListing>();
+    members.forEach((member) => {
+      const listing = member.roomListing;
+      if (!listing || listing.status !== "waiting") return;
+      const playerCount = members.filter((candidate) => candidate.roomCode === listing.code).length;
+      listings.set(listing.code, {
+        code: listing.code,
+        title: listing.title,
+        hasPassword: listing.hasPassword,
+        playerCount,
+      });
+    });
+    return [...listings.values()].sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  onRoomsChanged(callback: (rooms: OnlineRoomListing[]) => void) {
+    this.roomsChanged = callback;
+    callback(this.rooms);
+  }
+
+  async setRoom(code: string | null, listing?: OnlineRoomListing, status: "waiting" | "playing" = "waiting") {
+    this.currentRoomCode = code;
+    this.listing = listing ? { ...listing, status } : undefined;
+    await this.track();
+  }
+
+  async disconnect() {
+    const channel = this.channel;
+    this.channel = null;
+    this.roomsChanged = undefined;
+    if (channel) {
+      await channel.untrack();
+      await channel.unsubscribe();
+    }
+  }
+
+  private async track() {
+    if (!this.channel) return;
+    await this.channel.track({ playerId: this.playerId, roomCode: this.currentRoomCode, roomListing: this.listing });
+  }
 }
 
 export class OnlineRoom {
@@ -49,31 +144,44 @@ export class OnlineRoom {
   private snapshotReceived?: (snapshot: GameSnapshot) => void;
   private gameRestarted?: (info: OnlineRestartInfo) => void;
   private roomClosed?: () => void;
+  private directory?: OnlineDirectory;
 
-  private constructor(readonly code: string, readonly isHost: boolean) {}
+  private constructor(
+    readonly code: string,
+    readonly isHost: boolean,
+    readonly title: string,
+    readonly hasPassword: boolean,
+    private readonly password: string,
+  ) {}
 
-  static async create() {
-    const room = new OnlineRoom(createRoomCode(), true);
+  static async create(title: string, password: string, directory: OnlineDirectory) {
+    const room = new OnlineRoom(createRoomCode(), true, title, Boolean(password), password);
+    room.directory = directory;
     await room.connect();
+    await directory.setRoom(room.code, { code: room.code, title, hasPassword: Boolean(password), playerCount: 1 });
     return room;
   }
 
-  static async join(code: string) {
-    const normalizedCode = code.trim().toUpperCase();
+  static async join(listing: OnlineRoomListing, password: string, directory: OnlineDirectory) {
+    const normalizedCode = listing.code.trim().toUpperCase();
     if (!/^[A-HJ-NP-Z2-9]{8}$/.test(normalizedCode)) {
       throw new Error("방 코드는 영문 대문자와 숫자 8자리입니다.");
     }
-    const room = new OnlineRoom(normalizedCode, false);
+    const room = new OnlineRoom(normalizedCode, false, listing.title, listing.hasPassword, password);
+    room.directory = directory;
     await room.connect();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     if (!room.players.some((player) => player.isHost)) {
       await room.leave();
-      throw new Error("해당 방을 찾지 못했습니다. 방 코드를 확인해 주세요.");
+      throw new Error(listing.hasPassword
+        ? "비밀번호가 맞지 않거나 방이 종료됐습니다."
+        : "방이 종료됐거나 참가할 수 없습니다.");
     }
     if (room.players.length > 4) {
       await room.leave();
       throw new Error("이 방은 이미 최대 인원 4명이 참가했습니다.");
     }
+    await directory.setRoom(room.code);
     return room;
   }
 
@@ -122,7 +230,9 @@ export class OnlineRoom {
     if (!this.isHost || info.playerIds.length < 2 || info.playerIds.length > 4) {
       return false;
     }
-    return this.send("game-start", info);
+    const sent = await this.send("game-start", info);
+    if (sent) await this.directory?.setRoom(this.code, undefined, "playing");
+    return sent;
   }
 
   async sendShot(shot: OnlineShot) {
@@ -151,6 +261,8 @@ export class OnlineRoom {
       await channel.untrack();
       await channel.unsubscribe();
     }
+    await this.directory?.setRoom(null);
+    this.directory = undefined;
   }
 
   async close() {
@@ -169,7 +281,8 @@ export class OnlineRoom {
       throw new Error("온라인 연결 설정을 찾을 수 없습니다. 배포된 웹 게임에서 다시 시도해 주세요.");
     }
 
-    const channel = supabase.channel(`lion-room:${this.code}`, {
+    const topic = await roomTopic(this.code, this.password);
+    const channel = supabase.channel(topic, {
       config: {
         broadcast: { self: false, ack: true },
         presence: { key: this.playerId },
@@ -219,6 +332,14 @@ export class OnlineRoom {
       throw error;
     }
   }
+}
+
+async function roomTopic(code: string, password: string) {
+  if (!password) return `lion-room:${code}`;
+  const bytes = new TextEncoder().encode(`${code}:${password}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `lion-game-private:${code}:${hash}`;
 }
 
 function createRoomCode() {
