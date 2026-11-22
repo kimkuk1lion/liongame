@@ -105,20 +105,38 @@ export class Game extends Scene {
       return panel;
     };
     const sideX = GAME_WINDOW_WIDTH - 90;
-    addPanel(sideX, 105, 174, 145, 0xf9fff8);
-    this.add.text(sideX - 80, 49, "당겨서 놓으세요", {
-      color: "#315a69", fontSize: 15, fontStyle: "bold", wordWrap: { width: 158 },
-    });
-    this.add.text(sideX - 80, 88, "파랑 · 당기는 방향\n초록 · 발사 방향", {
-      color: "#66828a", fontSize: 13, lineSpacing: 7, wordWrap: { width: 158 },
-    });
-    addPanel(sideX, 390, 174, 280, 0xf9fff8);
-    const scoreboardTitle = this.add.text(sideX, 270, "이번 판 점수", {
+    addPanel(sideX, 390, 174, 220, 0xf9fff8);
+    this.add.text(sideX, 310, "조작 방법", {
       color: "#315a69", fontSize: 17, fontStyle: "bold",
     }).setOrigin(0.5);
-    const scoreboardText = this.add.text(sideX - 80, 305, "", {
-      color: "#42636e", fontSize: 15, lineSpacing: 12, fontStyle: "bold", wordWrap: { width: 155 },
+    this.add.text(sideX - 66, 350, "구슬을 끌어당긴 뒤 놓으세요.\n당긴 방향의 반대로 발사됩니다.\n\n파랑 · 당기는 방향\n초록 · 발사 방향", {
+      color: "#42636e", fontSize: 13, lineSpacing: 7, wordWrap: { width: 140 },
     });
+    this.add.text(GAME_WINDOW_WIDTH / 2, 34, "플레이어 점수", {
+      color: "#315a69", fontSize: 19, fontStyle: "bold",
+    }).setOrigin(0.5);
+    const scorecardWidth = this.initialPlayerCount === 4 ? 210 : this.initialPlayerCount === 3 ? 230 : 250;
+    const scorecardHeight = 76;
+    const scorecardGap = 12;
+    const scorecardStartX = (GAME_WINDOW_WIDTH - (this.initialPlayerCount * scorecardWidth + (this.initialPlayerCount - 1) * scorecardGap)) / 2;
+    const scorecardY = 118;
+    const scorecardBackgrounds: Phaser.GameObjects.Graphics[] = [];
+    const scorecardNames: Phaser.GameObjects.Text[] = [];
+    const scorecardScores: Phaser.GameObjects.Text[] = [];
+    const scorecardStatuses: Phaser.GameObjects.Text[] = [];
+    for (let i = 0; i < this.initialPlayerCount; i += 1) {
+      const left = scorecardStartX + i * (scorecardWidth + scorecardGap);
+      scorecardBackgrounds.push(this.add.graphics().setDepth(5));
+      scorecardNames.push(this.add.text(left + 23, scorecardY - 14, `플레이어 ${i + 1}`, {
+        color: "#315a69", fontSize: 14, fontStyle: "bold",
+      }).setOrigin(0, 0.5).setDepth(6));
+      scorecardScores.push(this.add.text(left + 23, scorecardY + 14, "0점", {
+        color: "#244657", fontSize: 22, fontStyle: "bold",
+      }).setOrigin(0, 0.5).setDepth(6));
+      scorecardStatuses.push(this.add.text(left + scorecardWidth - 13, scorecardY - 14, "대기", {
+        color: "#71888a", fontSize: 12, fontStyle: "bold",
+      }).setOrigin(1, 0.5).setDepth(6));
+    }
     const turnMarker = this.add.graphics().setDepth(3);
     const targetHoleMarker = this.add.graphics().setDepth(2);
     const targetHolePulse = this.add.circle(0, 0, 48)
@@ -265,7 +283,26 @@ export class Game extends Scene {
         const stateLabel = args.state === "wait_move" ? "구슬을 끌어당겨 보세요"
           : args.state === "moving" ? "구슬 이동 중" : "게임 종료";
         descriptionText.setText(`${args.map.name}  ·  ${stateLabel}${args.obstaclesEnabled ? "" : "  ·  방해물 없음"}`);
-        scoreboardTitle.setText(`구슬 ${args.turn + 1}의 차례`);
+        args.marbles.forEach((marble, i) => {
+          const active = i === args.turn && args.state !== "game_over";
+          const left = scorecardStartX + i * (scorecardWidth + scorecardGap);
+          const top = scorecardY - scorecardHeight / 2;
+          const card = scorecardBackgrounds[i];
+          card.clear();
+          card.fillStyle(0x7d9c91, 0.14).fillRoundedRect(left + 2, top + 4, scorecardWidth, scorecardHeight, 17);
+          card.fillStyle(active ? 0xffefc1 : 0xf9fff8, 1).fillRoundedRect(left, top, scorecardWidth, scorecardHeight, 17);
+          card.lineStyle(active ? 4 : 2, active ? 0xe7a52e : 0xd6e5dd, 1)
+            .strokeRoundedRect(left, top, scorecardWidth, scorecardHeight, 17);
+          if (active) {
+            card.fillStyle(0xe7a52e, 1).fillRoundedRect(left + 9, top + 17, 6, 42, 3);
+          }
+          scorecardNames[i].setAlpha(marble.alive ? 1 : 0.55);
+          scorecardScores[i].setText(`${marble.score}점`).setAlpha(marble.alive ? 1 : 0.55);
+          scorecardStatuses[i]
+            .setText(!marble.alive ? "탈락" : active ? "현재 차례" : marble.lion ? "사자 구슬" : "대기")
+            .setColor(!marble.alive ? "#91a0a0" : active ? "#a56312" : "#71888a")
+            .setAlpha(marble.alive ? 1 : 0.68);
+        });
         gameOverSummary.setText(this.manuallyEnded ? "게임을 종료했습니다." : "마지막 구슬만 남았습니다.");
         args.marbles.forEach((marble, i) => {
           gameOverMarbleImages[i]
@@ -275,14 +312,6 @@ export class Game extends Scene {
           gameOverScoreTexts[i].setText(`${marble.score}점`);
         });
         gameOverOverlay.setVisible(args.state === "game_over");
-        scoreboardText.setText(
-          [
-            ...args.marbles.map((marble) => {
-            const status = !marble.alive ? "탈락" : marble.lion ? "사자 구슬" : "플레이 중";
-            return `구슬 ${marble.id + 1}  ${marble.score}점\n${status}`;
-            }),
-          ].join("\n"),
-        );
         holeImages.forEach((hole) => hole.setAlpha(0.42));
         targetHoleMarker.clear();
         targetHolePulse.setVisible(false);
@@ -498,7 +527,9 @@ export class Game extends Scene {
     let dragOrigin: { x: number; y: number } | null = null;
     let lastPointer: Phaser.Input.Pointer | null = null;
     let dragStartedAt = 0;
-    const maxSpreadRadians = (55 * Math.PI) / 180;
+    const maxSpreadRadians = (43 * Math.PI) / 180;
+    const accurateTimingThreshold = 0.32;
+    const moderateTimingThreshold = 0.62;
     const timingCycleMs = 1800;
     const toBoardPoint = (pointer: Phaser.Input.Pointer) => ({
       x: pointer.x - boardX,
@@ -510,11 +541,13 @@ export class Game extends Scene {
       const position = Math.sin(phase);
       const error = Math.abs(position);
       timingNeedle.setX(position * 132);
-      const accurate = error < 0.14;
-      timingNeedle.setFillStyle(accurate ? 0x72f0ad : error < 0.55 ? 0xffd166 : 0xff6b6b);
+      const accurate = error < accurateTimingThreshold;
+      timingNeedle.setFillStyle(
+        accurate ? 0x72f0ad : error < moderateTimingThreshold ? 0xffd166 : 0xff6b6b,
+      );
       timingCaption
         .setText(accurate ? "정확한 타이밍" : "타이밍 오차 · 방향 편차 증가")
-        .setColor(accurate ? "#168a63" : "#c64d47");
+        .setColor(accurate ? "#168a63" : error < moderateTimingThreshold ? "#a56b18" : "#c64d47");
       return {
         error,
         spread: (2 * Math.PI) / 180 + error * maxSpreadRadians,
@@ -543,7 +576,10 @@ export class Game extends Scene {
         });
       }
       aimFan.clear();
-      aimFan.fillStyle(error < 0.14 ? 0x42d985 : error < 0.55 ? 0xffc247 : 0xff5757, 0.28);
+      aimFan.fillStyle(
+        error < accurateTimingThreshold ? 0x42d985 : error < moderateTimingThreshold ? 0xffc247 : 0xff5757,
+        0.28,
+      );
       aimFan.fillPoints(fanPoints, true);
     };
 
