@@ -13,13 +13,18 @@ import {
 } from "../online";
 import { playSoundEffect, startBackgroundMusic, updateBackgroundMusic } from "../audio";
 import {
+  ANIMAL_MARBLE_OPTIONS,
   loadMapSelection,
+  loadMarbleAppearance,
   loadObstaclesEnabled,
   loadSoundSettings,
+  saveMarbleAppearance,
   saveObstaclesEnabled,
   saveMapSelection,
   saveSoundSettings,
 } from "../settings";
+import { createMarbleArtwork, marbleAppearanceTextureId } from "../marbleArtwork";
+import { isGuestMode, setGuestMode, supabase } from "../supabaseClient";
 
 export class Lobby extends Scene {
   private viewObjects: Phaser.GameObjects.GameObject[] = [];
@@ -28,6 +33,8 @@ export class Lobby extends Scene {
   private playerCount = 4;
   private playMode: "local" | "pve" = "local";
   private aiDifficulty: AiDifficulty = "normal";
+  private marbleAppearance = loadMarbleAppearance();
+  private customizationMessage = "";
   private obstaclesEnabled = true;
   private soundSettings = loadSoundSettings();
   private onlineRoom: OnlineRoom | null = null;
@@ -49,6 +56,7 @@ export class Lobby extends Scene {
     this.selectedMap = loadMapSelection(GAME_MAPS.length);
     this.obstaclesEnabled = loadObstaclesEnabled();
     this.soundSettings = loadSoundSettings();
+    this.marbleAppearance = loadMarbleAppearance();
     startBackgroundMusic();
     this.drawLobbyBackdrop();
     this.drawMascot(GAME_WINDOW_WIDTH / 2, 285);
@@ -61,7 +69,33 @@ export class Lobby extends Scene {
     this.add.text(GAME_WINDOW_WIDTH / 2, 690, "어디부터 시작할까요?", {
       color: "#357f76", fontSize: 19, fontStyle: "bold",
     }).setOrigin(0.5);
+    this.drawAccountControl();
     this.showMenu();
+  }
+
+  private drawAccountControl() {
+    const label = this.add.text(GAME_WINDOW_WIDTH - 34, 42, isGuestMode() ? "게스트 · 계정 연결" : "계정 확인", {
+      color: "#315a69", fontSize: 14, fontStyle: "bold", backgroundColor: "#f5f0df",
+      padding: { x: 14, y: 10 },
+    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    label.on("pointerdown", async () => {
+      const { data } = await supabase?.auth.getSession() ?? { data: { session: null } };
+      if (data.session?.user) {
+        const confirmed = window.confirm("로그아웃할까요?");
+        if (!confirmed) return;
+        await supabase?.auth.signOut();
+        setGuestMode(false);
+        this.scene.start("Auth");
+      } else {
+        this.scene.start("Auth", { forceLogin: true });
+      }
+    });
+    if (supabase) {
+      void supabase.auth.getSession().then(({ data }) => {
+        if (!label.active) return;
+        label.setText(data.session?.user.email ? `${data.session.user.email} · 로그아웃` : "게스트 · 계정 연결");
+      });
+    }
   }
 
   private drawLobbyBackdrop() {
@@ -153,6 +187,150 @@ export class Lobby extends Scene {
     this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1190, "가볍게 즐기고, 멋지게 한 판!", {
       color: "#b8d2d9", fontSize: 18, fontStyle: "bold",
     }).setOrigin(0.5));
+    this.addActionButton(1390, "구슬 커스터마이징", "동물 구슬을 고르거나 내 이미지를 넣어 보세요", () => this.showMarbleCustomization());
+  }
+
+  private showMarbleCustomization() {
+    this.clearView();
+    this.marbleAppearance = loadMarbleAppearance();
+    this.addHeading("구슬 커스터마이징");
+    const currentAppearance = this.marbleAppearance;
+    const selectedName = currentAppearance.kind === "animal"
+      ? ANIMAL_MARBLE_OPTIONS.find(({ id }) => id === currentAppearance.animal)?.name ?? "사자"
+      : "내 이미지";
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 755, `현재 구슬 · ${selectedName}`, {
+      color: "#315a69", fontSize: 20, fontStyle: "bold",
+    }).setOrigin(0.5));
+    this.keep(this.add.circle(GAME_WINDOW_WIDTH / 2, 865, 68, 0xffffff, 0.7).setStrokeStyle(3, 0xffd274));
+    this.keep(this.add.image(GAME_WINDOW_WIDTH / 2, 865, this.getMarblePreviewTexture(this.marbleAppearance))
+      .setDisplaySize(112, 112));
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 955, "사용할 구슬을 선택하세요", {
+      color: "#607887", fontSize: 17,
+    }).setOrigin(0.5));
+
+    ANIMAL_MARBLE_OPTIONS.forEach((animal, index) => {
+      const row = Math.floor(index / 4);
+      const column = index % 4;
+      const x = 150 + column * 260;
+      const y = 1055 + row * 112;
+      const selected = this.marbleAppearance.kind === "animal" && this.marbleAppearance.animal === animal.id;
+      const art = this.keep(this.add.graphics());
+      art.fillStyle(0x657f83, 0.14).fillRoundedRect(x - 105, y - 43, 210, 86, 20);
+      art.fillStyle(selected ? 0xffefc1 : 0xf5f0df, 1).fillRoundedRect(x - 105, y - 47, 210, 86, 20);
+      art.lineStyle(selected ? 4 : 2, selected ? 0xe7a52e : 0xffffff, 0.98).strokeRoundedRect(x - 105, y - 47, 210, 86, 20);
+      this.keep(this.add.image(x - 63, y - 4, this.getMarblePreviewTexture({ kind: "animal", animal: animal.id }))
+        .setDisplaySize(58, 58));
+      this.keep(this.add.text(x - 25, y - 4, animal.name, {
+        color: "#315a69", fontSize: 17, fontStyle: "bold",
+      }).setOrigin(0, 0.5));
+      this.keep(this.add.rectangle(x, y - 4, 210, 86, 0xffffff, 0.001)
+        .setInteractive({ useHandCursor: true })
+        .on("pointerdown", () => {
+          this.marbleAppearance = { kind: "animal", animal: animal.id };
+          this.customizationMessage = "";
+          saveMarbleAppearance(this.marbleAppearance);
+          playSoundEffect("ui");
+          this.showMarbleCustomization();
+        }));
+    });
+    this.addActionButton(1320, "내 이미지 선택", "PNG · JPG · WebP · 사진 중앙을 동그랗게 잘라 적용", () => this.chooseMarbleImage());
+    if (this.marbleAppearance.kind === "custom") {
+      this.addActionButton(1475, "기본 동물로 바꾸기", "동물 구슬 목록에서 다시 선택할 수 있습니다", () => {
+        this.marbleAppearance = { kind: "animal", animal: "lion" };
+        this.customizationMessage = "";
+        saveMarbleAppearance(this.marbleAppearance);
+        this.showMarbleCustomization();
+      });
+    }
+    if (this.customizationMessage) this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 1580, this.customizationMessage, {
+      color: "#a9543d", fontSize: 16, align: "center", wordWrap: { width: 720 },
+    }).setOrigin(0.5));
+    this.addBackButton(1710);
+  }
+
+  private getMarblePreviewTexture(appearance: ReturnType<typeof loadMarbleAppearance>) {
+    const key = appearance.kind === "animal"
+      ? `marble-preview-${appearance.animal}`
+      : `marble-preview-${marbleAppearanceTextureId(appearance)}`;
+    if (this.textures.exists(key)) return key;
+    const texture = this.textures.createCanvas(key, 96, 96);
+    if (!texture) return "marble_green_polished";
+    const draw = (image?: CanvasImageSource) => {
+      const artwork = createMarbleArtwork(appearance, false, image);
+      texture.getContext().clearRect(0, 0, 96, 96);
+      texture.getContext().drawImage(artwork, 0, 0);
+      texture.refresh();
+    };
+    if (appearance.kind === "custom") {
+      const image = new Image();
+      image.onload = () => draw(image);
+      image.onerror = () => draw();
+      image.src = appearance.dataUrl;
+    } else {
+      draw();
+    }
+    return key;
+  }
+
+  private chooseMarbleImage() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+        this.customizationMessage = "PNG, JPG 또는 WebP 이미지 파일을 선택해 주세요.";
+        this.showMarbleCustomization();
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        this.customizationMessage = "이미지는 8MB 이하 파일을 선택해 주세요.";
+        this.showMarbleCustomization();
+        return;
+      }
+      const sourceUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const square = Math.min(image.naturalWidth, image.naturalHeight);
+          const canvas = document.createElement("canvas");
+          canvas.width = 160;
+          canvas.height = 160;
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("이미지를 처리하지 못했습니다.");
+          context.drawImage(
+            image,
+            (image.naturalWidth - square) / 2,
+            (image.naturalHeight - square) / 2,
+            square,
+            square,
+            0,
+            0,
+            160,
+            160,
+          );
+          let dataUrl = canvas.toDataURL("image/webp", 0.82);
+          if (!dataUrl.startsWith("data:image/webp")) dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+          const appearance = { kind: "custom" as const, dataUrl };
+          if (!saveMarbleAppearance(appearance)) throw new Error("저장 공간이 부족합니다. 다른 이미지를 선택해 주세요.");
+          this.marbleAppearance = appearance;
+          this.customizationMessage = "이미지를 구슬에 적용했습니다.";
+        } catch (error) {
+          this.customizationMessage = error instanceof Error ? error.message : "이미지를 적용하지 못했습니다.";
+        } finally {
+          URL.revokeObjectURL(sourceUrl);
+          this.showMarbleCustomization();
+        }
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(sourceUrl);
+        this.customizationMessage = "이미지를 열지 못했습니다. 다른 파일을 선택해 주세요.";
+        this.showMarbleCustomization();
+      };
+      image.src = sourceUrl;
+    };
+    input.click();
   }
 
   private drawIcon(kind: string, x: number, y: number) {
@@ -214,6 +392,7 @@ export class Lobby extends Scene {
         this.scene.start("Game", {
           initialMapIndex: this.selectedMap,
           initialPlayerCount: this.playerCount,
+          marbleAppearances: this.getPlayerMarbleAppearances(this.playerCount),
           computerPlayerIds: Array.from({ length: this.playerCount - 1 }, (_, index) => index + 1),
           aiDifficulty: this.aiDifficulty,
         });
@@ -222,14 +401,22 @@ export class Lobby extends Scene {
       const saved = hasSavedProgress(this.playerCount);
       if (saved) {
         this.addActionButton(1070, "이어하기", `${this.playerCount}인 · 저장된 진행 상황`, () => {
-          this.scene.start("Game", { resumeSavedGame: true, initialPlayerCount: this.playerCount });
+          this.scene.start("Game", {
+            resumeSavedGame: true,
+            initialPlayerCount: this.playerCount,
+            marbleAppearances: this.getPlayerMarbleAppearances(this.playerCount),
+          });
         });
         this.addActionButton(1230, "새 게임", `${this.playerCount}인 · ${GAME_MAPS[this.selectedMap].name}`, () => {
           this.showNewGameConfirm();
         });
       } else {
         this.addActionButton(1150, "게임 시작", `${this.playerCount}인 · ${GAME_MAPS[this.selectedMap].name}`, () => {
-          this.scene.start("Game", { initialMapIndex: this.selectedMap, initialPlayerCount: this.playerCount });
+          this.scene.start("Game", {
+            initialMapIndex: this.selectedMap,
+            initialPlayerCount: this.playerCount,
+            marbleAppearances: this.getPlayerMarbleAppearances(this.playerCount),
+          });
         });
       }
     }
@@ -409,7 +596,7 @@ export class Lobby extends Scene {
     this.onlineMessage = "방을 만들고 있습니다…";
     this.showOnline();
     try {
-      this.onlineRoom = await OnlineRoom.create(title, password, this.onlineDirectory);
+      this.onlineRoom = await OnlineRoom.create(title, password, this.onlineDirectory, this.marbleAppearance);
       this.showWaitingRoom();
     } catch (error) {
       this.onlineMessage = error instanceof Error ? error.message : "방을 만들지 못했습니다.";
@@ -429,7 +616,7 @@ export class Lobby extends Scene {
     this.onlineMessage = "방에 참가하고 있습니다…";
     this.showOnline();
     try {
-      this.onlineRoom = await OnlineRoom.join(listing, password, this.onlineDirectory);
+      this.onlineRoom = await OnlineRoom.join(listing, password, this.onlineDirectory, this.marbleAppearance);
       this.showWaitingRoom();
     } catch (error) {
       this.onlineMessage = error instanceof Error ? error.message : "방에 참가하지 못했습니다.";
@@ -487,6 +674,7 @@ export class Lobby extends Scene {
           mapIndex: this.selectedMap,
           obstaclesEnabled: this.obstaclesEnabled,
           playerIds: players.map((player) => player.playerId),
+          playerAppearances: players.map((player) => player.appearance),
         };
         void room.startGame(info).then((sent) => {
           if (sent) this.launchOnlineGame(room, info);
@@ -519,7 +707,15 @@ export class Lobby extends Scene {
       obstaclesEnabled: info.obstaclesEnabled,
       onlineRoom: room,
       onlinePlayerIds: info.playerIds,
+      marbleAppearances: info.playerAppearances,
     });
+  }
+
+  private getPlayerMarbleAppearances(count: number) {
+    const defaults = ["cat", "dog", "rabbit", "fox"] as const;
+    return Array.from({ length: count }, (_, index) => index === 0
+      ? this.marbleAppearance
+      : { kind: "animal" as const, animal: defaults[(index - 1) % defaults.length] });
   }
 
   private drawPlayerCountPicker(y: number) {
@@ -562,7 +758,11 @@ export class Lobby extends Scene {
     }).setOrigin(0.5));
     this.addActionButton(930, "확인하고 새 게임", `${this.playerCount}인 · ${GAME_MAPS[this.selectedMap].name} 맵으로 시작`, () => {
       clearSavedProgress();
-      this.scene.start("Game", { initialMapIndex: this.selectedMap, initialPlayerCount: this.playerCount });
+      this.scene.start("Game", {
+        initialMapIndex: this.selectedMap,
+        initialPlayerCount: this.playerCount,
+        marbleAppearances: this.getPlayerMarbleAppearances(this.playerCount),
+      });
     });
     this.addActionButton(1100, "취소", "이어하기 선택 화면으로 돌아갑니다", () => this.showStart());
   }

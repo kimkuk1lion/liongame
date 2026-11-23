@@ -11,7 +11,8 @@ import { clearSavedProgress, System } from "../../system";
 import type { AiDifficulty } from "../ai";
 import { OnlineRoom, type OnlineRestartInfo, type OnlineShot } from "../online";
 import { playSoundEffect, startBackgroundMusic, updateBackgroundMusic } from "../audio";
-import { loadObstaclesEnabled, loadSoundSettings, saveSoundSettings } from "../settings";
+import { loadMarbleAppearance, loadObstaclesEnabled, loadSoundSettings, saveSoundSettings, type MarbleAppearance } from "../settings";
+import { createMarbleArtwork, marbleAppearanceTextureId, marbleTextureKey } from "../marbleArtwork";
 
 type GameLaunchData = {
   initialMapIndex?: number;
@@ -23,6 +24,7 @@ type GameLaunchData = {
   onlinePlayerIds?: string[];
   computerPlayerIds?: number[];
   aiDifficulty?: AiDifficulty;
+  marbleAppearances?: MarbleAppearance[];
 };
 
 export class Game extends Scene {
@@ -41,6 +43,7 @@ export class Game extends Scene {
   private onlineObstaclesEnabled = true;
   private computerPlayerIds: number[] = [];
   private aiDifficulty: AiDifficulty = "normal";
+  private marbleAppearances: MarbleAppearance[] = [];
   private aiTurnScheduled: number | null = null;
 
   constructor() {
@@ -58,6 +61,12 @@ export class Game extends Scene {
     this.onlineObstaclesEnabled = data.obstaclesEnabled ?? true;
     this.computerPlayerIds = data.computerPlayerIds ?? [];
     this.aiDifficulty = data.aiDifficulty ?? "normal";
+    const defaultAnimals = ["cat", "dog", "rabbit", "fox"] as const;
+    this.marbleAppearances = Array.from({ length: this.initialPlayerCount }, (_, index) =>
+      data.marbleAppearances?.[index] ?? (index === 0
+        ? loadMarbleAppearance()
+        : { kind: "animal", animal: defaultAnimals[(index - 1) % defaultAnimals.length] }),
+    );
     this.aiTurnScheduled = null;
     this.manuallyEnded = false;
     this.devEndHoldStartedAt = null;
@@ -85,6 +94,11 @@ export class Game extends Scene {
     this.load.setPath("assets");
     this.load.image("marble_red", "marble_red.png");
     this.load.image("marble_green", "marble_green.png");
+    this.marbleAppearances.forEach((appearance) => {
+      if (appearance.kind !== "custom") return;
+      const key = `uploaded-marble-${marbleAppearanceTextureId(appearance)}`;
+      if (!this.textures.exists(key)) this.load.image(key, appearance.dataUrl);
+    });
   }
 
   create() {
@@ -242,7 +256,7 @@ export class Game extends Scene {
     for (let i = 0; i < this.initialPlayerCount; i += 1) {
       const x = GAME_WINDOW_WIDTH / 2 + (i - (this.initialPlayerCount - 1) / 2) * 145;
       const y = gameOverCenterY - 48;
-      const image = this.add.image(x, y, "marble_green_polished").setDisplaySize(44, 44);
+      const image = this.add.image(x, y, marbleTextureKey(i, this.marbleAppearances[i], false)).setDisplaySize(44, 44);
       const number = this.add.text(x, y - 1, `${i + 1}`, {
         color: "#ffffff", fontSize: 17, fontStyle: "bold", stroke: "#17313b", strokeThickness: 4,
       }).setOrigin(0.5);
@@ -269,7 +283,7 @@ export class Game extends Scene {
       (args) => {
         if (marbleImages.length === 0) {
           args.marbles.forEach((marble) => {
-            marbleImages.push(this.add.image(0, 0, marble.lion ? "marble_red_polished" : "marble_green_polished")
+            marbleImages.push(this.add.image(0, 0, marbleTextureKey(marble.id, this.marbleAppearances[marble.id], marble.lion))
               .setDisplaySize(32, 32).setDepth(1));
             marbleLabelTexts.push(
               this.add
@@ -368,7 +382,7 @@ export class Game extends Scene {
         gameOverSummary.setText(this.manuallyEnded ? "게임을 종료했습니다." : "마지막 구슬만 남았습니다.");
         args.marbles.forEach((marble, i) => {
           gameOverMarbleImages[i]
-            .setTexture(marble.lion ? "marble_red_polished" : "marble_green_polished")
+            .setTexture(marbleTextureKey(marble.id, this.marbleAppearances[marble.id], marble.lion))
             .setAlpha(marble.alive ? 1 : 0.48);
           gameOverMarbleNumbers[i].setAlpha(marble.alive ? 1 : 0.7);
           gameOverScoreTexts[i].setText(`${marble.score}점`);
@@ -414,7 +428,7 @@ export class Game extends Scene {
 
           const image = marbleImages[i];
           image.setPosition(marble.x, marble.y);
-          image.setTexture(marble.lion ? "marble_red_polished" : "marble_green_polished");
+          image.setTexture(marbleTextureKey(marble.id, this.marbleAppearances[marble.id], marble.lion));
           image.setAlpha(marble.alive ? 1 : 0);
 
           const label = marbleLabelTexts[i];
@@ -509,6 +523,7 @@ export class Game extends Scene {
         onlinePlayerIds: this.onlinePlayerIds,
         computerPlayerIds: this.computerPlayerIds,
         aiDifficulty: this.aiDifficulty,
+        marbleAppearances: this.marbleAppearances,
       });
     };
     this.onlineRoom?.onGameRestarted((info: OnlineRestartInfo) => {
@@ -532,6 +547,7 @@ export class Game extends Scene {
           initialScores: scores,
           computerPlayerIds: this.computerPlayerIds,
           aiDifficulty: this.aiDifficulty,
+          marbleAppearances: this.marbleAppearances,
         });
       }
     };
@@ -890,6 +906,23 @@ export class Game extends Scene {
     };
     create("marble_red_polished", "#ff796c", "#a93442", "#fff1dc");
     create("marble_green_polished", "#54d0aa", "#16765f", "#f0fff1");
+    this.marbleAppearances.forEach((appearance, playerIndex) => {
+      const uploadedKey = appearance.kind === "custom"
+        ? `uploaded-marble-${marbleAppearanceTextureId(appearance)}`
+        : undefined;
+      const customImage = uploadedKey && this.textures.exists(uploadedKey)
+        ? this.textures.get(uploadedKey).getSourceImage() as CanvasImageSource
+        : undefined;
+      [false, true].forEach((isLion) => {
+        const key = marbleTextureKey(playerIndex, appearance, isLion);
+        if (this.textures.exists(key)) return;
+        const artwork = createMarbleArtwork(appearance, isLion, customImage);
+        const texture = this.textures.createCanvas(key, 96, 96);
+        if (!texture) return;
+        texture.getContext().drawImage(artwork, 0, 0);
+        texture.refresh();
+      });
+    });
   }
 
   private createHoleTexture() {

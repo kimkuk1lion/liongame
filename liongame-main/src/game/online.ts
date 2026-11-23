@@ -1,16 +1,20 @@
-import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { GameSnapshot } from "../system";
+import type { MarbleAppearance } from "./settings";
+import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 export type OnlinePlayer = {
   playerId: string;
   isHost: boolean;
   joinedAt: number;
+  appearance: MarbleAppearance;
 };
 
 export type OnlineStartInfo = {
   mapIndex: number;
   obstaclesEnabled: boolean;
   playerIds: string[];
+  playerAppearances: MarbleAppearance[];
 };
 
 export type OnlineShot = {
@@ -42,15 +46,8 @@ type DirectoryMember = {
   presence_ref?: string;
 };
 
-const projectUrl = import.meta.env.VITE_SUPABASE_URL;
-const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-const supabase = projectUrl && publishableKey
-  ? createClient(projectUrl, publishableKey)
-  : null;
-
 export function isOnlineConfigured() {
-  return supabase !== null;
+  return isSupabaseConfigured();
 }
 
 export class OnlineDirectory {
@@ -152,22 +149,23 @@ export class OnlineRoom {
     readonly title: string,
     readonly hasPassword: boolean,
     private readonly password: string,
+    private readonly appearance: MarbleAppearance,
   ) {}
 
-  static async create(title: string, password: string, directory: OnlineDirectory) {
-    const room = new OnlineRoom(createRoomCode(), true, title, Boolean(password), password);
+  static async create(title: string, password: string, directory: OnlineDirectory, appearance: MarbleAppearance) {
+    const room = new OnlineRoom(createRoomCode(), true, title, Boolean(password), password, appearance);
     room.directory = directory;
     await room.connect();
     await directory.setRoom(room.code, { code: room.code, title, hasPassword: Boolean(password), playerCount: 1 });
     return room;
   }
 
-  static async join(listing: OnlineRoomListing, password: string, directory: OnlineDirectory) {
+  static async join(listing: OnlineRoomListing, password: string, directory: OnlineDirectory, appearance: MarbleAppearance) {
     const normalizedCode = listing.code.trim().toUpperCase();
     if (!/^[A-HJ-NP-Z2-9]{8}$/.test(normalizedCode)) {
       throw new Error("방 코드는 영문 대문자와 숫자 8자리입니다.");
     }
-    const room = new OnlineRoom(normalizedCode, false, listing.title, listing.hasPassword, password);
+    const room = new OnlineRoom(normalizedCode, false, listing.title, listing.hasPassword, password, appearance);
     room.directory = directory;
     await room.connect();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
@@ -195,6 +193,7 @@ export class OnlineRoom {
           playerId: member.playerId,
           isHost: member.isHost,
           joinedAt: member.joinedAt,
+          appearance: member.appearance ?? { kind: "animal", animal: "lion" },
         });
       }
     });
@@ -316,7 +315,12 @@ export class OnlineRoom {
           if (status === "SUBSCRIBED") {
             window.clearTimeout(timeout);
             try {
-              await channel.track({ playerId: this.playerId, isHost: this.isHost, joinedAt: this.joinedAt });
+              await channel.track({
+                playerId: this.playerId,
+                isHost: this.isHost,
+                joinedAt: this.joinedAt,
+                appearance: this.appearance,
+              });
               resolve();
             } catch {
               reject(new Error("대기실 참가에 실패했습니다. 다시 시도해 주세요."));

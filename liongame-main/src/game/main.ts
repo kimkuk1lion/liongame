@@ -1,5 +1,6 @@
 import { GAME_WINDOW_HEIGHT, GAME_WINDOW_WIDTH } from "../constants";
 import { Game as MainGame } from "./scenes/Game";
+import { Auth } from "./scenes/Auth";
 import { Lobby } from "./scenes/Lobby";
 import { AUTO, Game, Scale, Types } from "phaser";
 
@@ -15,7 +16,8 @@ const config: Types.Core.GameConfig = {
     mode: Scale.FIT,
     autoCenter: Scale.CENTER_BOTH,
   },
-  scene: [Lobby, MainGame],
+  dom: { createContainer: true },
+  scene: [Auth, Lobby, MainGame],
 };
 
 const StartGame = (parent: string) => {
