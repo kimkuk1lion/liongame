@@ -1,4 +1,5 @@
 import { Marble, SCORE_RULES } from "./game/Marble";
+import { chooseAiShot, type AiDifficulty, type AiShot } from "./game/ai";
 import { GAME_WIDTH } from "./constants";
 import type { SoundEffect } from "./game/audio";
 import { GAME_MAPS, type GameMap, type Hole } from "./game/maps";
@@ -106,6 +107,11 @@ export class System {
       return null;
     }
     return { x: marble.x, y: marble.y };
+  }
+
+  chooseAiShot(difficulty: AiDifficulty): AiShot | null {
+    if (this.state !== "wait_move" || !this.marbles[this.turn]?.alive) return null;
+    return chooseAiShot(this.marbles, this.turn, this.currentMap, this.obstaclesEnabled, difficulty);
   }
 
   selectMap(mapIndex: number) {

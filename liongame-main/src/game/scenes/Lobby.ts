@@ -2,6 +2,7 @@ import { Scene } from "phaser";
 import { GAME_WINDOW_HEIGHT, GAME_WINDOW_WIDTH } from "../../constants";
 import { clearSavedProgress, hasSavedProgress } from "../../system";
 import { GAME_MAPS } from "../maps";
+import type { AiDifficulty } from "../ai";
 import {
   isOnlineConfigured,
   OnlineDirectory,
@@ -25,6 +26,8 @@ export class Lobby extends Scene {
   private viewCleanups: Array<() => void> = [];
   private selectedMap = 0;
   private playerCount = 4;
+  private playMode: "local" | "pve" = "local";
+  private aiDifficulty: AiDifficulty = "normal";
   private obstaclesEnabled = true;
   private soundSettings = loadSoundSettings();
   private onlineRoom: OnlineRoom | null = null;
@@ -203,21 +206,105 @@ export class Lobby extends Scene {
   private showStart() {
     this.clearView();
     this.addHeading("게임을 시작합니다");
-    this.drawPlayerCountPicker();
-    const saved = hasSavedProgress(this.playerCount);
-    if (saved) {
-      this.addActionButton(970, "이어하기", `${this.playerCount}인 · 저장된 진행 상황`, () => {
-        this.scene.start("Game", { resumeSavedGame: true, initialPlayerCount: this.playerCount });
-      });
-      this.addActionButton(1130, "새 게임", `${this.playerCount}인 · ${GAME_MAPS[this.selectedMap].name}`, () => {
-        this.showNewGameConfirm();
+    this.drawModePicker();
+    this.drawPlayerCountPicker(855);
+    if (this.playMode === "pve") {
+      this.drawAiDifficultyPicker();
+      this.addActionButton(1230, "PvE 시작", `나 1명 · 컴퓨터 ${this.playerCount - 1}명 · ${GAME_MAPS[this.selectedMap].name}`, () => {
+        this.scene.start("Game", {
+          initialMapIndex: this.selectedMap,
+          initialPlayerCount: this.playerCount,
+          computerPlayerIds: Array.from({ length: this.playerCount - 1 }, (_, index) => index + 1),
+          aiDifficulty: this.aiDifficulty,
+        });
       });
     } else {
-      this.addActionButton(1030, "게임 시작", `${this.playerCount}인 · ${GAME_MAPS[this.selectedMap].name}`, () => {
-        this.scene.start("Game", { initialMapIndex: this.selectedMap, initialPlayerCount: this.playerCount });
-      });
+      const saved = hasSavedProgress(this.playerCount);
+      if (saved) {
+        this.addActionButton(1070, "이어하기", `${this.playerCount}인 · 저장된 진행 상황`, () => {
+          this.scene.start("Game", { resumeSavedGame: true, initialPlayerCount: this.playerCount });
+        });
+        this.addActionButton(1230, "새 게임", `${this.playerCount}인 · ${GAME_MAPS[this.selectedMap].name}`, () => {
+          this.showNewGameConfirm();
+        });
+      } else {
+        this.addActionButton(1150, "게임 시작", `${this.playerCount}인 · ${GAME_MAPS[this.selectedMap].name}`, () => {
+          this.scene.start("Game", { initialMapIndex: this.selectedMap, initialPlayerCount: this.playerCount });
+        });
+      }
     }
     this.addBackButton();
+  }
+
+  private drawModePicker() {
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 715, "플레이 방식", {
+      color: "#315a69", fontSize: 19, fontStyle: "bold",
+    }).setOrigin(0.5));
+    ([
+      { mode: "local" as const, x: 355, label: "함께 플레이" },
+      { mode: "pve" as const, x: 725, label: "PvE · 컴퓨터 대전" },
+    ]).forEach(({ mode, x, label }) => {
+      const selected = this.playMode === mode;
+      const art = this.keep(this.add.graphics());
+      const draw = (active: boolean) => {
+        art.clear();
+        art.fillStyle(active ? 0x38a888 : 0xf5f0df, 1).fillRoundedRect(x - 160, 735, 320, 62, 20);
+        art.lineStyle(3, 0xffffff, 0.95).strokeRoundedRect(x - 160, 735, 320, 62, 20);
+      };
+      draw(selected);
+      const button = this.keep(this.add.rectangle(x, 766, 320, 62, 0xffffff, 0.001)
+        .setInteractive({ useHandCursor: true }));
+      const text = this.keep(this.add.text(x, 766, label, {
+        color: selected ? "#ffffff" : "#315a69", fontSize: 18, fontStyle: "bold",
+      }).setOrigin(0.5));
+      button.on("pointerdown", () => {
+        playSoundEffect("ui");
+        this.playMode = mode;
+        this.showStart();
+      });
+      button.on("pointerover", () => { if (!selected) draw(true); text.setColor("#ffffff"); });
+      button.on("pointerout", () => {
+        if (!selected) draw(false);
+        text.setColor(selected ? "#ffffff" : "#315a69");
+      });
+    });
+  }
+
+  private drawAiDifficultyPicker() {
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 975, "컴퓨터 난이도", {
+      color: "#315a69", fontSize: 19, fontStyle: "bold",
+    }).setOrigin(0.5));
+    const choices: Array<{ value: AiDifficulty; label: string }> = [
+      { value: "easy", label: "쉬움" },
+      { value: "normal", label: "보통" },
+      { value: "hard", label: "어려움" },
+    ];
+    choices.forEach(({ value, label }, index) => {
+      const x = GAME_WINDOW_WIDTH / 2 + (index - 1) * 150;
+      const selected = this.aiDifficulty === value;
+      const art = this.keep(this.add.graphics());
+      const draw = (active: boolean) => {
+        art.clear();
+        art.fillStyle(active ? 0xffbd59 : 0xf5f0df, 1).fillRoundedRect(x - 62, 1000, 124, 54, 18);
+        art.lineStyle(3, 0xffffff, 0.95).strokeRoundedRect(x - 62, 1000, 124, 54, 18);
+      };
+      draw(selected);
+      const button = this.keep(this.add.rectangle(x, 1027, 124, 54, 0xffffff, 0.001)
+        .setInteractive({ useHandCursor: true }));
+      const text = this.keep(this.add.text(x, 1027, label, {
+        color: selected ? "#ffffff" : "#315a69", fontSize: 17, fontStyle: "bold",
+      }).setOrigin(0.5));
+      button.on("pointerdown", () => {
+        playSoundEffect("ui");
+        this.aiDifficulty = value;
+        this.showStart();
+      });
+      button.on("pointerover", () => { if (!selected) draw(true); text.setColor("#ffffff"); });
+      button.on("pointerout", () => {
+        if (!selected) draw(false);
+        text.setColor(selected ? "#ffffff" : "#315a69");
+      });
+    });
   }
 
   private showOnline() {
@@ -435,13 +522,12 @@ export class Lobby extends Scene {
     });
   }
 
-  private drawPlayerCountPicker() {
-    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, 745, "플레이 인원", {
+  private drawPlayerCountPicker(y: number) {
+    this.keep(this.add.text(GAME_WINDOW_WIDTH / 2, y - 55, this.playMode === "pve" ? "전체 인원 (나 포함)" : "플레이 인원", {
       color: "#315a69", fontSize: 20, fontStyle: "bold",
     }).setOrigin(0.5));
     for (let count = 2; count <= 4; count += 1) {
       const x = GAME_WINDOW_WIDTH / 2 + (count - 3) * 145;
-      const y = 810;
       const selected = count === this.playerCount;
       const art = this.keep(this.add.graphics());
       const draw = (active: boolean) => {

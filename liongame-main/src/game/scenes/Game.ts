@@ -8,6 +8,7 @@ import {
   GAME_WINDOW_WIDTH,
 } from "../../constants";
 import { clearSavedProgress, System } from "../../system";
+import type { AiDifficulty } from "../ai";
 import { OnlineRoom, type OnlineRestartInfo, type OnlineShot } from "../online";
 import { playSoundEffect, startBackgroundMusic, updateBackgroundMusic } from "../audio";
 import { loadObstaclesEnabled, loadSoundSettings, saveSoundSettings } from "../settings";
@@ -20,6 +21,8 @@ type GameLaunchData = {
   obstaclesEnabled?: boolean;
   onlineRoom?: OnlineRoom;
   onlinePlayerIds?: string[];
+  computerPlayerIds?: number[];
+  aiDifficulty?: AiDifficulty;
 };
 
 export class Game extends Scene {
@@ -36,6 +39,9 @@ export class Game extends Scene {
   private onlinePlayerIds: string[] = [];
   private onlineLocalShotPending = false;
   private onlineObstaclesEnabled = true;
+  private computerPlayerIds: number[] = [];
+  private aiDifficulty: AiDifficulty = "normal";
+  private aiTurnScheduled: number | null = null;
 
   constructor() {
     super("Game");
@@ -50,6 +56,9 @@ export class Game extends Scene {
     this.onlinePlayerIds = data.onlinePlayerIds ?? [];
     this.onlineLocalShotPending = false;
     this.onlineObstaclesEnabled = data.obstaclesEnabled ?? true;
+    this.computerPlayerIds = data.computerPlayerIds ?? [];
+    this.aiDifficulty = data.aiDifficulty ?? "normal";
+    this.aiTurnScheduled = null;
     this.manuallyEnded = false;
     this.devEndHoldStartedAt = null;
     this.requestEndGame = null;
@@ -139,7 +148,11 @@ export class Game extends Scene {
     for (let i = 0; i < this.initialPlayerCount; i += 1) {
       const left = scorecardStartX + i * (scorecardWidth + scorecardGap);
       scorecardBackgrounds.push(this.add.graphics().setDepth(5));
-      scorecardNames.push(this.add.text(left + 23, scorecardY - 14, `플레이어 ${i + 1}`, {
+      const aiNumber = this.computerPlayerIds.indexOf(i) + 1;
+      const playerName = this.computerPlayerIds.length === 0
+        ? `플레이어 ${i + 1}`
+        : i === 0 ? "나" : `컴퓨터 ${aiNumber}`;
+      scorecardNames.push(this.add.text(left + 23, scorecardY - 14, playerName, {
         color: "#315a69", fontSize: 14, fontStyle: "bold",
       }).setOrigin(0, 0.5).setDepth(6));
       scorecardScores.push(this.add.text(left + 23, scorecardY + 14, "0점", {
@@ -233,6 +246,7 @@ export class Game extends Scene {
     board.add([background, terrain, pullLine, launchLine, aimFan, descriptionText, targetHoleMarker, targetHolePulse, turnMarker]);
 
     let previousState: "wait_move" | "moving" | "game_over" = "wait_move";
+    let runComputerTurn: ((turn: number) => void) | null = null;
     const system = new System(
       this.initialPlayerCount,
       (args) => {
@@ -301,7 +315,19 @@ export class Game extends Scene {
 
         const stateLabel = args.state === "wait_move" ? "구슬을 끌어당겨 보세요"
           : args.state === "moving" ? "구슬 이동 중" : "게임 종료";
-        descriptionText.setText(`${args.map.name}  ·  ${stateLabel}${args.obstaclesEnabled ? "" : "  ·  방해물 없음"}`);
+        const isComputerTurn = this.computerPlayerIds.includes(args.turn);
+        const aiLabel = this.computerPlayerIds.length > 0 && isComputerTurn && args.state === "wait_move"
+          ? `컴퓨터 ${this.computerPlayerIds.indexOf(args.turn) + 1} 차례 · 샷을 고르는 중`
+          : stateLabel;
+        descriptionText.setText(`${args.map.name}  ·  ${aiLabel}${args.obstaclesEnabled ? "" : "  ·  방해물 없음"}`);
+        if (this.computerPlayerIds.length > 0 && isComputerTurn && args.state === "wait_move") {
+          if (this.aiTurnScheduled !== args.turn) {
+            this.aiTurnScheduled = args.turn;
+            this.time.delayedCall(650, () => runComputerTurn?.(args.turn));
+          }
+        } else {
+          this.aiTurnScheduled = null;
+        }
         args.marbles.forEach((marble, i) => {
           const active = i === args.turn && args.state !== "game_over";
           const left = scorecardStartX + i * (scorecardWidth + scorecardGap);
@@ -318,7 +344,7 @@ export class Game extends Scene {
           scorecardNames[i].setAlpha(marble.alive ? 1 : 0.55);
           scorecardScores[i].setText(`${marble.score}점`).setAlpha(marble.alive ? 1 : 0.55);
           scorecardStatuses[i]
-            .setText(!marble.alive ? "탈락" : active ? "현재 차례" : marble.lion ? "사자 구슬" : "대기")
+            .setText(!marble.alive ? "탈락" : active && isComputerTurn ? "컴퓨터 차례" : active ? "내 차례" : marble.lion ? "사자 구슬" : "대기")
             .setColor(!marble.alive ? "#91a0a0" : active ? "#a56312" : "#71888a")
             .setAlpha(marble.alive ? 1 : 0.68);
         });
@@ -385,7 +411,7 @@ export class Game extends Scene {
         resumeSavedGame: this.resumeSavedGame,
         initialScores: this.initialScores,
         obstaclesEnabled: this.onlineRoom ? this.onlineObstaclesEnabled : loadObstaclesEnabled(),
-        persistProgress: !this.onlineRoom,
+        persistProgress: !this.onlineRoom && this.computerPlayerIds.length === 0,
         onSoundEffect: playSoundEffect,
       },
     );
@@ -417,6 +443,8 @@ export class Game extends Scene {
         obstaclesEnabled: this.onlineRoom ? this.onlineObstaclesEnabled : undefined,
         onlineRoom: this.onlineRoom ?? undefined,
         onlinePlayerIds: this.onlinePlayerIds,
+        computerPlayerIds: this.computerPlayerIds,
+        aiDifficulty: this.aiDifficulty,
       });
     };
     this.onlineRoom?.onGameRestarted((info: OnlineRestartInfo) => {
@@ -433,11 +461,13 @@ export class Game extends Scene {
         });
       } else {
         system.stop();
-        clearSavedProgress();
+        if (this.computerPlayerIds.length === 0) clearSavedProgress();
         this.scene.restart({
           initialMapIndex: this.initialMapIndex,
           initialPlayerCount: this.initialPlayerCount,
           initialScores: scores,
+          computerPlayerIds: this.computerPlayerIds,
+          aiDifficulty: this.aiDifficulty,
         });
       }
     };
@@ -590,22 +620,25 @@ export class Game extends Scene {
       )
       .setOrigin(0.5);
     let dragOrigin: { x: number; y: number } | null = null;
-    let lastPointer: Phaser.Input.Pointer | null = null;
+    let lastPointer: { x: number; y: number } | null = null;
+    let computerAnimating = false;
     let dragStartedAt = 0;
     const maxSpreadRadians = (43 * Math.PI) / 180;
     const accurateTimingThreshold = 0.32;
     const moderateTimingThreshold = 0.62;
     const timingCycleMs = 1800;
-    const toBoardPoint = (pointer: Phaser.Input.Pointer) => ({
+    const toBoardPoint = (pointer: { x: number; y: number }) => ({
       x: pointer.x - boardX,
       y: pointer.y - boardY,
     });
 
-    const getTiming = (now: number) => {
+    const getTiming = (now: number, forcedSpread?: number) => {
       const phase = ((now - dragStartedAt) / timingCycleMs) * Math.PI * 2 - Math.PI / 2;
       const position = Math.sin(phase);
-      const error = Math.abs(position);
-      timingNeedle.setX(position * 132);
+      const error = forcedSpread === undefined
+        ? Math.abs(position)
+        : Math.max(0, Math.min(1, (forcedSpread - (2 * Math.PI) / 180) / maxSpreadRadians));
+      timingNeedle.setX((forcedSpread === undefined ? position : error) * 132);
       const accurate = error < accurateTimingThreshold;
       timingNeedle.setFillStyle(
         accurate ? 0x72f0ad : error < moderateTimingThreshold ? 0xffd166 : 0xff6b6b,
@@ -615,11 +648,11 @@ export class Game extends Scene {
         .setColor(accurate ? "#168a63" : error < moderateTimingThreshold ? "#a56b18" : "#c64d47");
       return {
         error,
-        spread: (2 * Math.PI) / 180 + error * maxSpreadRadians,
+        spread: forcedSpread ?? (2 * Math.PI) / 180 + error * maxSpreadRadians,
       };
     };
 
-    const showDrag = (pointer: Phaser.Input.Pointer) => {
+    const showDrag = (pointer: { x: number; y: number }, forcedSpread?: number) => {
       if (!dragOrigin) {
         return;
       }
@@ -629,7 +662,7 @@ export class Game extends Scene {
       pullLine.setTo(dragOrigin.x, dragOrigin.y, point.x, point.y);
       launchLine.setTo(dragOrigin.x, dragOrigin.y, dragOrigin.x - pullX, dragOrigin.y - pullY);
       const intendedAngle = Math.atan2(-pullY, -pullX);
-      const { error, spread } = getTiming(performance.now());
+      const { error, spread } = getTiming(performance.now(), forcedSpread);
       const fanPoints = [{ x: dragOrigin.x, y: dragOrigin.y }];
       const fanRadius = 110;
       const fanSteps = 16;
@@ -655,6 +688,8 @@ export class Game extends Scene {
     this.events.once("shutdown", () => this.events.off("update", updateTimingPreview));
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (computerAnimating) return;
+      if (this.computerPlayerIds.includes(system.getOnlineSnapshot().turn)) return;
       if (this.onlineRoom && this.onlinePlayerIds[system.getOnlineSnapshot().turn] !== this.onlineRoom.playerId) return;
       const point = toBoardPoint(pointer);
       dragOrigin = system.getDraggableMarblePosition(point.x, point.y);
@@ -671,6 +706,7 @@ export class Game extends Scene {
     });
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      if (computerAnimating) return;
       if (pointer.isDown) {
         lastPointer = pointer;
         showDrag(pointer);
@@ -678,6 +714,7 @@ export class Game extends Scene {
     });
 
     const finishDrag = (pointer: Phaser.Input.Pointer) => {
+      if (computerAnimating) return;
       if (!dragOrigin) {
         return;
       }
@@ -712,6 +749,47 @@ export class Game extends Scene {
 
     this.input.on("pointerup", finishDrag);
     this.input.on("pointerupoutside", finishDrag);
+
+    runComputerTurn = (turn: number) => {
+      if (this.computerPlayerIds.length === 0 || this.aiTurnScheduled !== turn) return;
+      const snapshot = system.getOnlineSnapshot();
+      if (snapshot.state !== "wait_move" || snapshot.turn !== turn) return;
+      const marble = snapshot.marbles[turn];
+      const origin = system.getDraggableMarblePosition(marble.x, marble.y);
+      const shot = system.chooseAiShot(this.aiDifficulty);
+      if (!origin || !shot) return;
+
+      computerAnimating = true;
+      dragOrigin = origin;
+      dragStartedAt = performance.now();
+      timingMeter.setVisible(true);
+      aimFan.setVisible(true);
+      pullLine.setVisible(true);
+      launchLine.setVisible(true);
+      const dragProxy = {
+        x: boardX + origin.x,
+        y: boardY + origin.y,
+      };
+      lastPointer = dragProxy;
+      this.tweens.add({
+        targets: dragProxy,
+        x: boardX + origin.x - shot.directionX,
+        y: boardY + origin.y - shot.directionY,
+        duration: 620,
+        ease: "Sine.easeInOut",
+        onUpdate: () => showDrag(dragProxy, shot.spreadRadians),
+        onComplete: () => {
+          computerAnimating = false;
+          dragOrigin = null;
+          lastPointer = null;
+          pullLine.setVisible(false);
+          launchLine.setVisible(false);
+          aimFan.clear().setVisible(false);
+          timingMeter.setVisible(false);
+          system.launchMarble(shot.directionX, shot.directionY, shot.spreadRadians, shot.randomUnit);
+        },
+      });
+    };
 
     system.render();
   }

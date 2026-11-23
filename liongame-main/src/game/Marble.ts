@@ -41,7 +41,7 @@ export class Marble {
     return true;
   }
 
-  step(obstacles: readonly MapObstacle[] = [], onBounce?: () => void) {
+  step(obstacles: readonly MapObstacle[] = [], onBounce?: (type: "wall" | "obstacle") => void) {
     if (!this.alive || this.inHole) {
       return false;
     }
@@ -50,7 +50,8 @@ export class Marble {
     this.y += this.velocityY;
     const hitWall = this.bounceAtWalls();
     const hitObstacle = this.bounceAtObstacles(obstacles);
-    if (hitWall || hitObstacle) onBounce?.();
+    if (hitWall) onBounce?.("wall");
+    if (hitObstacle) onBounce?.("obstacle");
 
     this.velocityX *= FRICTION;
     this.velocityY *= FRICTION;
