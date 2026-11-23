@@ -215,6 +215,22 @@ export class Game extends Scene {
         color: "#244657", fontSize: 46, fontStyle: "bold",
       }).setOrigin(0.5),
     ]);
+    const disconnectOverlay = this.add.container(0, 0).setDepth(300).setVisible(false);
+    const disconnectMessage = this.add.text(GAME_WINDOW_WIDTH / 2, GAME_WINDOW_HEIGHT / 2, "", {
+      color: "#315a69", fontSize: 22, fontStyle: "bold", align: "center", lineSpacing: 12,
+      wordWrap: { width: 540 },
+    }).setOrigin(0.5);
+    disconnectOverlay.add([
+      this.add.rectangle(GAME_WINDOW_WIDTH / 2, GAME_WINDOW_HEIGHT / 2, GAME_WINDOW_WIDTH, GAME_WINDOW_HEIGHT, 0x183747, 0.58),
+      this.add.graphics().fillStyle(0x456d71, 0.35).fillRoundedRect(
+        GAME_WINDOW_WIDTH / 2 - 300, GAME_WINDOW_HEIGHT / 2 - 112, 600, 224, 30,
+      ),
+      this.add.graphics().fillStyle(0xf5f0df, 1)
+        .fillRoundedRect(GAME_WINDOW_WIDTH / 2 - 294, GAME_WINDOW_HEIGHT / 2 - 120, 588, 216, 30)
+        .lineStyle(4, 0xffffff, 0.95)
+        .strokeRoundedRect(GAME_WINDOW_WIDTH / 2 - 294, GAME_WINDOW_HEIGHT / 2 - 120, 588, 216, 30),
+      disconnectMessage,
+    ]);
     const gameOverSummary = this.add.text(GAME_WINDOW_WIDTH / 2, GAME_WINDOW_HEIGHT / 2 - 120, "마지막 구슬만 남았습니다.", {
       color: "#56727b", fontSize: 21, align: "center", lineSpacing: 8, wordWrap: { width: 560 },
     }).setOrigin(0.5);
@@ -247,6 +263,7 @@ export class Game extends Scene {
 
     let previousState: "wait_move" | "moving" | "game_over" = "wait_move";
     let runComputerTurn: ((turn: number) => void) | null = null;
+    let onlineDeparturePending = false;
     const system = new System(
       this.initialPlayerCount,
       (args) => {
@@ -417,6 +434,24 @@ export class Game extends Scene {
     );
     if (this.onlineRoom) {
       const room = this.onlineRoom;
+      let onlineDepartureHandled = false;
+      let departureTimer: Phaser.Time.TimerEvent | null = null;
+      const returnToLobby = (message: string, closeRoom: boolean) => {
+        if (onlineDepartureHandled) return;
+        onlineDepartureHandled = true;
+        onlineDeparturePending = true;
+        departureTimer?.remove(false);
+        departureTimer = null;
+        disconnectMessage.setText(message);
+        disconnectOverlay.setVisible(true);
+        this.time.delayedCall(1200, () => {
+          if (this.onlineRoom !== room) return;
+          system.stop();
+          if (closeRoom && room.isHost) void room.close(); else void room.leave();
+          this.onlineRoom = null;
+          this.scene.start("Lobby");
+        });
+      };
       room.onShot((shot: OnlineShot) => {
         if (this.onlinePlayerIds[system.getOnlineSnapshot().turn] !== shot.playerId) return;
         if (shot.playerId === room.playerId) return;
@@ -424,9 +459,38 @@ export class Game extends Scene {
       });
       room.onSnapshot((snapshot) => { system.applyOnlineSnapshot(snapshot); });
       room.onClosed(() => {
-        void room.leave();
-        this.onlineRoom = null;
-        this.scene.start("Lobby");
+        returnToLobby("방이 종료되었습니다.\n로비로 이동합니다.", false);
+      });
+      room.onPlayersChanged((players) => {
+        const missingPlayerId = this.onlinePlayerIds.find(
+          (playerId) => !players.some((player) => player.playerId === playerId),
+        );
+        if (!missingPlayerId) {
+          if (departureTimer) {
+            departureTimer.remove(false);
+            departureTimer = null;
+            onlineDeparturePending = false;
+            disconnectOverlay.setVisible(false);
+            system.render();
+          }
+          return;
+        }
+        if (onlineDepartureHandled || departureTimer) return;
+        const missingPlayerNumber = this.onlinePlayerIds.indexOf(missingPlayerId) + 1;
+        onlineDeparturePending = true;
+        disconnectMessage.setText(`플레이어 ${missingPlayerNumber}의 연결이 끊겼습니다.\n6초 동안 재접속을 기다립니다…`);
+        disconnectOverlay.setVisible(true);
+        departureTimer = this.time.delayedCall(6000, () => {
+          departureTimer = null;
+          const stillMissing = !room.players.some((player) => player.playerId === missingPlayerId);
+          if (!stillMissing) {
+            onlineDeparturePending = false;
+            disconnectOverlay.setVisible(false);
+            system.render();
+            return;
+          }
+          returnToLobby("참가자가 돌아오지 않아 게임을 종료합니다.\n로비로 이동합니다.", room.isHost);
+        });
       });
     }
     this.requestEndGame = () => {
@@ -688,6 +752,7 @@ export class Game extends Scene {
     this.events.once("shutdown", () => this.events.off("update", updateTimingPreview));
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (onlineDeparturePending) return;
       if (computerAnimating) return;
       if (this.computerPlayerIds.includes(system.getOnlineSnapshot().turn)) return;
       if (this.onlineRoom && this.onlinePlayerIds[system.getOnlineSnapshot().turn] !== this.onlineRoom.playerId) return;
@@ -706,6 +771,7 @@ export class Game extends Scene {
     });
 
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      if (onlineDeparturePending) return;
       if (computerAnimating) return;
       if (pointer.isDown) {
         lastPointer = pointer;
@@ -714,6 +780,7 @@ export class Game extends Scene {
     });
 
     const finishDrag = (pointer: Phaser.Input.Pointer) => {
+      if (onlineDeparturePending) return;
       if (computerAnimating) return;
       if (!dragOrigin) {
         return;
