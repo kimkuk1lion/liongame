@@ -70,6 +70,8 @@ export class Auth extends Scene {
         <button id="email-login" type="submit" style="width:100%;height:50px;border:0;border-radius:13px;background:#38a888;color:white;font-weight:750;font-size:16px;cursor:pointer">이메일로 로그인</button>
         <button id="email-signup" type="button" style="width:100%;height:46px;margin-top:8px;border:1px solid #b8d2d9;border-radius:13px;background:#f3f8f5;color:#315a69;font-weight:700;font-size:15px;cursor:pointer">이메일로 회원가입</button>
       </form>
+      <div style="display:flex;align-items:center;gap:12px;margin:18px 0;color:#9aabad;font-size:12px"><span style="height:1px;background:#d8e4df;flex:1"></span>또는<span style="height:1px;background:#d8e4df;flex:1"></span></div>
+      <button id="google-login" type="button" style="width:100%;height:50px;border:1px solid #d5dfdc;border-radius:13px;background:white;color:#315a69;font-weight:750;font-size:15px;cursor:pointer">Google 계정으로 계속</button>
       <button id="guest-play" type="button" style="width:100%;height:48px;margin-top:18px;border:0;border-radius:13px;background:#e7f1f3;color:#315a69;font-weight:700;font-size:15px;cursor:pointer">게스트로 플레이</button>
       <div id="auth-message" role="status" style="min-height:22px;margin-top:13px;color:#a9543d;font-size:13px;line-height:1.5"></div>
       <div style="margin-top:7px;color:#8b9b9e;font-size:11px">게스트는 계정 연동 기능 없이 게임을 즐길 수 있습니다</div>
@@ -88,6 +90,7 @@ export class Auth extends Scene {
     byId("email-signup").addEventListener("click", () => {
       void this.signUp(email.value.trim(), password.value, message);
     });
+    byId("google-login").addEventListener("click", () => void this.signInWithGoogle(message));
     byId("guest-play").addEventListener("click", () => {
       playSoundEffect("ui");
       setGuestMode(true);
@@ -129,6 +132,20 @@ export class Auth extends Scene {
       this.scene.start("Lobby");
     } catch {
       this.finishRequest(message, "가입 연결에 실패했습니다. 인터넷 연결을 확인해 주세요.");
+    }
+  }
+
+  private async signInWithGoogle(message: HTMLElement) {
+    if (!this.beginRequest(message)) return;
+    if (!supabase) return this.finishRequest(message, "로그인 연결 설정이 없습니다. 게스트로 플레이할 수 있습니다.");
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${window.location.origin}${window.location.pathname}` },
+      });
+      if (error) this.finishRequest(message, "Google 로그인을 시작하지 못했습니다. Supabase 제공자 설정을 확인해 주세요.");
+    } catch {
+      this.finishRequest(message, "Google 로그인 연결에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     }
   }
 
